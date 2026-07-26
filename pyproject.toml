@@ -1,0 +1,60 @@
+[project]
+name = "agent-runtime-defense"
+version = "0.1.0"
+description = "Runtime prompt-injection defense at the Agent tool-call boundary"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "agentdojo==0.1.35",
+    "click==8.1.8",
+    "numpy>=1.26,<3",
+    "scikit-learn>=1.4,<2",
+]
+
+[project.optional-dependencies]
+hf = [
+    "accelerate>=0.33,<2",
+    "torch>=2.2,<3",
+    "transformers>=4.45,<6",
+]
+hf-fp8 = [
+    "accelerate>=0.33,<2",
+    "kernels==0.15.2",
+    "torch>=2.2,<3",
+    "transformers>=4.45,<6",
+]
+
+[project.scripts]
+agent-defense = "agent_defense.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5",
+    "ruff>=0.9",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_defense"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+markers = [
+    "integration: exercises AgentDojo or an external model",
+    "slow: requires heavyweight model weights or a GPU",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "RUF"]

@@ -1,0 +1,29 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local experiment outputs. Commit only small, reviewed summaries.
+artifacts/
+runs/*
+!runs/crossmodel/
+runs/crossmodel/*
+!runs/crossmodel/*-preregistration.json
+!runs/crossmodel/*-manifest.json
+results/
+outputs/
+logs/
+vectors/
+activations/
+checkpoints/
+reports/generated/
+
+# Local configuration and heavyweight model files.
+.env
+*.safetensors
+*.ckpt
+*.pth
+*.pt

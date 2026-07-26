@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "model": {
+    "model_id_or_path": "Qwen/Qwen3-8B",
+    "revision": "724852fba258c692581d5ddc69ee0b50e6c60a0c9348ad177b2c9ab34a90ae98",
+    "layer": 22,
+    "position": "tool_input",
+    "device": "auto",
+    "dtype": "bfloat16",
+    "max_new_tokens": 256,
+    "disable_thinking": true,
+    "local_files_only": true
+  },
+  "benchmark": {
+    "suite_name": "banking",
+    "benchmark_version": "v1.2.2",
+    "attack_name": "injecagent"
+  },
+  "defenses": [
+    {
+      "name": "none"
+    },
+    {
+      "name": "repeat_user_prompt"
+    },
+    {
+      "name": "direction",
+      "artifact_path": "../runs/frozen/qwen3-policy-direction.json"
+    },
+    {
+      "name": "activation_probe",
+      "artifact_path": "../runs/frozen/qwen3-activation-probe.json"
+    },
+    {
+      "name": "melon",
+      "melon_threshold": 0.8
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "banking-user1-injection5",
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_5",
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "case_id": "banking-user11-injection5",
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_5",
+      "seeds": [
+        0
+      ]
+    },
+    {
+      "case_id": "banking-user13-injection5",
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_5",
+      "seeds": [
+        0
+      ]
+    }
+  ]
+}
