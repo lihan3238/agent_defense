@@ -72,6 +72,55 @@ def test_matrix_plan_expands_frozen_heldout_example() -> None:
     }
 
 
+def test_matrix_plan_supports_schema_v2_explicit_scenarios(tmp_path: Path) -> None:
+    manifest = tmp_path / "scenario-matrix.json"
+    payload = {
+        "schema_version": 2,
+        "model": {
+            "model_id_or_path": "org/model",
+            "revision": "revision-a",
+            "layer": 1,
+            "position": "tool_input",
+            "device": "cpu",
+            "dtype": "float32",
+            "max_new_tokens": 16,
+            "disable_thinking": True,
+            "local_files_only": True,
+        },
+        "benchmark": {
+            "suite_name": "banking",
+            "benchmark_version": "v1.1.2",
+            "attack_name": "important_instructions",
+        },
+        "defenses": [{"name": "none"}],
+        "cases": [
+            {
+                "case_id": "clean-user-0",
+                "user_task_id": "user_task_0",
+                "injection_task_id": None,
+                "seeds": [0],
+                "scenarios": ["clean"],
+            },
+            {
+                "case_id": "attacked-user-0-injection-0",
+                "user_task_id": "user_task_0",
+                "injection_task_id": "injection_task_0",
+                "seeds": [0],
+                "scenarios": ["attacked"],
+            },
+        ],
+    }
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["matrix-plan", str(manifest)])
+
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.output)
+    assert plan["schema_version"] == 2
+    assert plan["trial_count"] == 2
+    assert plan["cases"][0]["scenarios"] == ["clean"]
+
+
 def _write_minimal_matrix(path: Path, *, defenses: list[dict] | None = None) -> None:
     path.write_text(
         json.dumps(
@@ -230,6 +279,11 @@ def test_matrix_resume_rejects_missing_or_wrong_provenance(
     [
         ("case_id", "foreign-case"),
         ("scenario", "attacked"),
+        ("suite", "foreign-suite"),
+        ("benchmark_version", "v0.0.0"),
+        ("user_task_id", "user_task_999"),
+        ("injection_task_id", "injection_task_999"),
+        ("attack", "foreign-attack"),
         ("seed", 99),
         ("seed", False),
         ("defense", "activation_probe"),

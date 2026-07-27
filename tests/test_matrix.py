@@ -58,6 +58,29 @@ def _manifest() -> dict:
     }
 
 
+def _scenario_manifest() -> dict:
+    data = _manifest()
+    data["schema_version"] = 2
+    data["defenses"] = [{"name": "none"}]
+    data["cases"] = [
+        {
+            "case_id": "clean-user-1",
+            "user_task_id": "user_task_1",
+            "injection_task_id": None,
+            "seeds": [0],
+            "scenarios": ["clean"],
+        },
+        {
+            "case_id": "attacked-user-1-injection-5",
+            "user_task_id": "user_task_1",
+            "injection_task_id": "injection_task_5",
+            "seeds": [0],
+            "scenarios": ["attacked"],
+        },
+    ]
+    return data
+
+
 def test_manifest_load_is_strict_and_resolves_artifacts(tmp_path: Path) -> None:
     path = tmp_path / "matrix.json"
     path.write_text(json.dumps(_manifest()), encoding="utf-8")
@@ -125,6 +148,50 @@ def test_trial_expansion_has_canonical_order_pairs_and_runner_kwargs(tmp_path: P
     assert probe["artifact_path"] == (tmp_path / "probe.json").resolve()
     assert probe["revision"] == "fixed-revision"
     assert "melon_threshold" not in probe
+
+
+def test_schema_v2_expands_only_explicit_scenarios() -> None:
+    manifest = parse_manifest(_scenario_manifest())
+
+    trials = expand_trials(manifest)
+
+    assert [trial.trial_id for trial in trials] == [
+        "attacked-user-1-injection-5__attacked__seed-0__none",
+        "clean-user-1__clean__seed-0__none",
+    ]
+    assert trials[0].runner_kwargs()["injection_task_id"] == "injection_task_5"
+    assert trials[1].runner_kwargs()["injection_task_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda case: case.update({"scenarios": []}), "non-empty"),
+        (lambda case: case.update({"scenarios": ["clean", "clean"]}), "duplicates"),
+        (lambda case: case.update({"scenarios": ["attacked", "clean"]}), "exactly one"),
+        (
+            lambda case: case.update({"scenarios": ["clean"], "injection_task_id": "injection_task_5"}),
+            "must be null",
+        ),
+        (lambda case: case.update({"injection_task_id": None}), "non-empty string"),
+    ],
+)
+def test_schema_v2_rejects_ambiguous_scenario_cases(mutate, message: str) -> None:
+    data = _scenario_manifest()
+    mutate(data["cases"][1])
+
+    with pytest.raises(ManifestError, match=message):
+        parse_manifest(data)
+
+
+def test_schema_v2_rejects_duplicate_experiment_identity() -> None:
+    data = _scenario_manifest()
+    duplicate = dict(data["cases"][1])
+    duplicate["case_id"] = "different-case-id"
+    data["cases"].append(duplicate)
+
+    with pytest.raises(ManifestError, match="duplicate experiment identity"):
+        parse_manifest(data)
 
 
 def test_paper_melon_manifest_requires_explicit_embedding_identity() -> None:

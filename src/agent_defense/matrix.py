@@ -71,8 +71,9 @@ class DefenseConfig:
 class CaseConfig:
     case_id: str
     user_task_id: str
-    injection_task_id: str
+    injection_task_id: str | None
     seeds: tuple[int, ...]
+    scenarios: tuple[Scenario, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +97,7 @@ class TrialSpec:
     model: ModelConfig
     benchmark: BenchmarkConfig
     user_task_id: str
-    injection_task_id: str
+    injection_task_id: str | None
 
     def runner_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -292,10 +293,43 @@ def _parse_defense(value: Any, index: int, base_dir: Path) -> DefenseConfig:
     return DefenseConfig(name=name)
 
 
-def _parse_case(value: Any, index: int) -> CaseConfig:
+def _parse_scenarios(value: Any, location: str) -> tuple[Scenario, ...]:
+    if not isinstance(value, list) or not value:
+        raise ManifestError(f"{location} must be a non-empty array")
+    parsed: list[Scenario] = []
+    for index, raw_scenario in enumerate(value):
+        scenario = _string(raw_scenario, f"{location}[{index}]")
+        if scenario not in _SCENARIOS:
+            raise ManifestError(f"{location}[{index}] must be 'clean' or 'attacked'")
+        parsed.append(scenario)  # type: ignore[arg-type]
+    if len(set(parsed)) != len(parsed):
+        raise ManifestError(f"{location} must not contain duplicates")
+    if len(parsed) != 1:
+        raise ManifestError(f"{location} must contain exactly one scenario")
+    return tuple(parsed)
+
+
+def _parse_case(value: Any, index: int, *, schema_version: int) -> CaseConfig:
     location = f"cases[{index}]"
     raw = _mapping(value, location)
-    _exact_keys(raw, {"case_id", "user_task_id", "injection_task_id", "seeds"}, location)
+    if schema_version == 1:
+        _exact_keys(raw, {"case_id", "user_task_id", "injection_task_id", "seeds"}, location)
+        scenarios = _SCENARIOS
+        injection_task_id: str | None = _string(raw["injection_task_id"], f"{location}.injection_task_id")
+    else:
+        _exact_keys(
+            raw,
+            {"case_id", "user_task_id", "injection_task_id", "seeds", "scenarios"},
+            location,
+        )
+        scenarios = _parse_scenarios(raw["scenarios"], f"{location}.scenarios")
+        injection_value = raw["injection_task_id"]
+        if "attacked" in scenarios:
+            injection_task_id = _string(injection_value, f"{location}.injection_task_id")
+        else:
+            if injection_value is not None:
+                raise ManifestError(f"{location}.injection_task_id must be null for clean-only cases")
+            injection_task_id = None
     seeds_raw = raw["seeds"]
     if not isinstance(seeds_raw, list) or not seeds_raw:
         raise ManifestError(f"{location}.seeds must be a non-empty array")
@@ -308,8 +342,9 @@ def _parse_case(value: Any, index: int) -> CaseConfig:
     return CaseConfig(
         case_id=_string(raw["case_id"], f"{location}.case_id", safe_id=True),
         user_task_id=_string(raw["user_task_id"], f"{location}.user_task_id"),
-        injection_task_id=_string(raw["injection_task_id"], f"{location}.injection_task_id"),
+        injection_task_id=injection_task_id,
         seeds=seeds,
+        scenarios=scenarios,
     )
 
 
@@ -319,7 +354,7 @@ def parse_manifest(data: Any, *, base_dir: str | Path | None = None) -> MatrixMa
     raw = _mapping(data, "manifest")
     _exact_keys(raw, {"schema_version", "model", "benchmark", "defenses", "cases"}, "manifest")
     schema_version = _integer(raw["schema_version"], "schema_version")
-    if schema_version != 1:
+    if schema_version not in {1, 2}:
         raise ManifestError(f"Unsupported schema_version: {schema_version}")
     resolved_base = Path.cwd() if base_dir is None else Path(base_dir)
 
@@ -336,10 +371,25 @@ def parse_manifest(data: Any, *, base_dir: str | Path | None = None) -> MatrixMa
     cases_raw = raw["cases"]
     if not isinstance(cases_raw, list) or not cases_raw:
         raise ManifestError("cases must be a non-empty array")
-    cases = tuple(_parse_case(value, index) for index, value in enumerate(cases_raw))
+    cases = tuple(
+        _parse_case(value, index, schema_version=schema_version) for index, value in enumerate(cases_raw)
+    )
     case_ids = [case.case_id for case in cases]
     if len(set(case_ids)) != len(case_ids):
         raise ManifestError("case_id values must be unique")
+    if schema_version == 2:
+        seen_episode_keys: set[tuple[Scenario, str, str | None, int]] = set()
+        for case in cases:
+            for scenario in case.scenarios:
+                injection_task_id = case.injection_task_id if scenario == "attacked" else None
+                for seed in case.seeds:
+                    key = (scenario, case.user_task_id, injection_task_id, seed)
+                    if key in seen_episode_keys:
+                        raise ManifestError(
+                            "schema v2 cases must not duplicate experiment identity "
+                            "(scenario, user_task_id, injection_task_id, seed)"
+                        )
+                    seen_episode_keys.add(key)
 
     return MatrixManifest(
         schema_version=schema_version,
@@ -372,7 +422,7 @@ def expand_trials(manifest: MatrixManifest) -> tuple[TrialSpec, ...]:
     trials: list[TrialSpec] = []
     for case in sorted(manifest.cases, key=lambda item: item.case_id):
         for seed in sorted(case.seeds):
-            for scenario in _SCENARIOS:
+            for scenario in case.scenarios:
                 for defense in defenses:
                     trial_id = f"{case.case_id}__{scenario}__seed-{seed}__{defense.name}"
                     trials.append(
@@ -413,6 +463,11 @@ def run_sequential(
             raise TypeError(f"Runner returned {type(raw).__name__} for {spec.trial_id}, expected mapping")
         result = dict(raw)
         expected = {
+            "suite": spec.benchmark.suite_name,
+            "benchmark_version": spec.benchmark.benchmark_version,
+            "user_task_id": spec.user_task_id,
+            "injection_task_id": (spec.injection_task_id if spec.scenario == "attacked" else None),
+            "attack": spec.benchmark.attack_name if spec.scenario == "attacked" else None,
             "defense": spec.defense.name,
             "seed": spec.seed,
             "attacked": spec.scenario == "attacked",

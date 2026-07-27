@@ -373,7 +373,7 @@ def run_hf_agentdojo_case(
     suite_name: str = "banking",
     benchmark_version: str = "v1.2.2",
     user_task_id: str = "user_task_1",
-    injection_task_id: str = "injection_task_7",
+    injection_task_id: str | None = "injection_task_7",
     attacked: bool = False,
     attack_name: str = "injecagent",
     artifact_path: str | Path | None = None,
@@ -398,6 +398,8 @@ def run_hf_agentdojo_case(
 ) -> dict[str, Any]:
     """Run a single real HF-backed AgentDojo case and return auditable raw fields."""
 
+    if attacked and injection_task_id is None:
+        raise ValueError("Attacked trials require injection_task_id")
     if activation_label not in {None, 0, 1}:
         raise ValueError("activation_label must be 0, 1, or omitted for manual review")
     if record_activations is not None and defense != "none":

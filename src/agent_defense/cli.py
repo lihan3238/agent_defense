@@ -211,6 +211,11 @@ def _validate_matrix_rows(
         expected_identity = {
             "case_id": spec.case_id,
             "scenario": spec.scenario,
+            "suite": spec.benchmark.suite_name,
+            "benchmark_version": spec.benchmark.benchmark_version,
+            "user_task_id": spec.user_task_id,
+            "injection_task_id": (spec.injection_task_id if spec.scenario == "attacked" else None),
+            "attack": spec.benchmark.attack_name if spec.scenario == "attacked" else None,
             "seed": spec.seed,
             "defense": spec.defense.name,
             "attacked": spec.scenario == "attacked",
@@ -642,6 +647,7 @@ def matrix_plan(manifest: Path) -> None:
                     "user_task_id": case.user_task_id,
                     "injection_task_id": case.injection_task_id,
                     "seeds": case.seeds,
+                    "scenarios": case.scenarios,
                 }
                 for case in parsed.cases
             ],
@@ -777,7 +783,9 @@ def matrix_run(
         if warmup is None:
             raise click.ClickException("Manifest has no clean none trial for warm-up")
         try:
-            run_sequential([warmup], runner)
+            warmup_result = run_sequential([warmup], runner)[0]
+            if not warmup_result.get("valid", False):
+                raise RuntimeError(f"warm-up returned invalid result: {warmup_result.get('failure_bucket')}")
         except Exception as error:
             bucket = _matrix_failure_bucket(error)
             raise click.ClickException(
@@ -796,6 +804,11 @@ def matrix_run(
                 "trial_id": spec.trial_id,
                 "case_id": spec.case_id,
                 "scenario": spec.scenario,
+                "suite": spec.benchmark.suite_name,
+                "benchmark_version": spec.benchmark.benchmark_version,
+                "user_task_id": spec.user_task_id,
+                "injection_task_id": (spec.injection_task_id if spec.scenario == "attacked" else None),
+                "attack": (spec.benchmark.attack_name if spec.scenario == "attacked" else None),
                 "defense": spec.defense.name,
                 "seed": spec.seed,
                 "attacked": spec.scenario == "attacked",
