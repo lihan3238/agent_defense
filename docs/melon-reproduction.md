@@ -97,6 +97,27 @@ smoke（冒烟测试）中，相同攻击转账调用相似度为 `1.000000`，�
 每个 model × defense（模型×防御）需要 97 个 clean episode（无攻击回合）和 `4 × 629` 个 attacked episode
 （受攻击回合），共 2613 回合。面试前优先运行 `none` 与 `melon_paper` 的单一强攻击，再决定是否扩展到四攻击全量。
 
+### 当前完整数据重跑协议
+
+当前阶段已把上述优先项冻结为一轮可完成、分母不缩减的实验协议：攻击只使用 `important_instructions`，防御只比较
+`none` 与 `melon_paper`。每种防御计划运行 97 个 clean episode（无攻击回合）和完整 629 个 attacked episode
+（受攻击回合），即 726 回合；两种防御合计 1452 回合。这里的“完整”指四个 suite（任务套件）的全部 629 个
+用户任务×注入任务配对，不指论文四种攻击的 2516 个受攻击回合。
+
+清单使用 Matrix Schema v2（矩阵清单模式第二版），把每个用户任务写成 clean-only（仅无攻击）案例，把每个
+用户任务×注入任务配对写成 attacked-only（仅受攻击）案例，避免旧模式为每个配对重复生成 clean 回合。四个任务套件各拆成
+四份，共 16 份运行清单；按相同分片编号汇总，两种防御的计划量为 `364/364/362/362`，合计 1452。
+
+Travel（旅行）的 `injection_task_6` 是 pure-text attack（纯文本攻击），没有恶意工具参考调用。其 20 个受攻击回合仍进入
+UA（Utility Under Attack，攻击场景任务可用性）和 Targeted ASR（Targeted Attack Success Rate，定向攻击成功率）
+分母，但结果必须单列，不能用来宣称工具调用比较器已拦截或漏检某个恶意工具调用。
+
+本轮 `melon_paper` 明确使用本地 MiniLM（小型句向量模型）
+`sentence-transformers/all-MiniLM-L6-v2`，不是论文发布代码使用的 OpenAI（模型服务提供方）
+`text-embedding-3-large`。因此这轮结果只能表述为“论文兼容算法在本地模型与完整 AgentDojo 629 配对上的重跑”，不能表述为
+论文 Table 1（表 1）数值复现。`matrix-run --resume`（矩阵断点续跑）会跳过已有 `trial_id`（试验标识符），无论该行是否
+`valid`（有效）；失败桶原样保留，不自动选择性重跑或用较好结果替换。
+
 ## 单案例命令
 
 本地语义后端：

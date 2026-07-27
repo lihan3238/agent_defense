@@ -311,8 +311,69 @@ calibration 样本，并使用新的独立 test。
 
 协议冻结为阈值 `0.8`、论文参数投影、按论文附录重建的少样本掩码轨迹、跨步骤工具调用缓存、整批执行前比较和任意命中后终止回合。嵌入缓存未复制，
 终止与故障时默认阻断属于本仓库的工程化执行语义。论文
-629 案例必须使用 AgentDojo `v1.1.2` 与四种攻击；当前 `v1.2.2` 的 949 配对不能冒充论文分母。完整命令与限制见
+629 个 user-task × injection-task（用户任务×注入任务）配对必须使用 AgentDojo `v1.1.2`；若逐项对齐论文实验，
+还要让这些配对分别运行四种攻击。当前 `v1.2.2` 的 949 配对不能冒充论文分母。完整命令与限制见
 [MELON 论文兼容重建](melon-reproduction.md)。
+
+### 9.3 本轮四套件完整数据协议
+
+本轮先完成“单一攻击覆盖完整 629 配对”，不是一次性运行论文的四攻击全矩阵。冻结项如下：
+
+- benchmark（基准）为 AgentDojo `v1.1.2`；
+- attack（攻击模板）固定为 `important_instructions`；
+- defense（防御方法）只比较 `none` 与 `melon_paper`；
+- `melon_paper` 使用本地 `sentence-transformers/all-MiniLM-L6-v2`，而不是论文发布代码中的 OpenAI（模型服务提供方）
+  `text-embedding-3-large`；因此只能称本地完整数据重跑，不能称论文数值复现。
+
+每种防御的计划分母为 97 个 clean episode（无攻击回合）和 629 个 attacked episode（受攻击回合），共 726 回合：
+
+| Suite（任务套件） | clean | attacked | 每种防御合计 |
+|---|---:|---:|---:|
+| Banking（银行） | 16 | 144 | 160 |
+| Slack（协作通信） | 21 | 105 | 126 |
+| Travel（旅行） | 20 | 140 | 160 |
+| Workspace（办公空间） | 40 | 240 | 280 |
+| 合计 | 97 | 629 | 726 |
+
+`none + melon_paper` 共计划 1452 回合，即 194 个 clean 回合和 1258 个 attacked 回合。启动模型前必须汇总全部
+`matrix-plan`（矩阵计划）输出，逐项核对上述分母；不能以实际有效行数反推计划分母。
+
+本轮清单使用 Matrix Schema v2（矩阵清单模式第二版）。每个 case（案例）必须显式只选择一个 `scenarios`（场景）值：
+
+- clean-only（仅无攻击）案例写 `"scenarios": ["clean"]`，并强制
+  `"injection_task_id": null`；每个用户任务只生成一次；
+- attacked-only（仅受攻击）案例写 `"scenarios": ["attacked"]`，并提供非空注入任务；每个
+  用户任务×注入任务配对只生成一次。
+
+Schema v1（矩阵清单模式第一版）仍保留历史的 clean+attacked（无攻击+受攻击）自动展开行为，但不能用于本轮完整数据，
+否则 629 个配对会错误地重复生成 629 个 clean 回合，而不是所需的 97 个。
+
+为了在四张卡上均衡执行，四个 suite 分别拆成四份，共 16 份 manifest（运行清单）。把同一编号的四个 suite 分片合并看作
+一个全局 shard（分片）时，基础案例数固定为 `182/182/181/181`；每份案例都运行两种防御，因此四个全局分片分别是
+`364/364/362/362` 回合，总和严格为 1452。分片只改变调度，不改变模型、攻击、防御、seed（随机种子）或指标口径。
+
+清单由固定生成器创建；完整运行结束后必须通过受检合并器，不能直接拼接结果文件：
+
+```bash
+uv run python scripts/generate_v112_full_manifests.py runs/full-v112/manifests
+uv run python scripts/validate_v112_full_results.py \
+  runs/full-v112/manifests \
+  runs/full-v112-results/raw \
+  --merged-jsonl runs/full-v112-results/merged.raw.jsonl \
+  --summary-json runs/full-v112-results/summary.json
+```
+
+四个 worker（工作进程）分别运行 `scripts/run_v112_full_worker.sh 0..3`；脚本要求调用者显式设置单个已授权
+`CUDA_VISIBLE_DEVICES`（CUDA 可见设备）、仓库根目录、独立 Python 解释器和本地模型路径，不把机器地址或设备编号写入清单。
+
+Travel 的 `injection_task_6` 是 pure-text attack（纯文本攻击），攻击目标没有恶意工具参考调用。它对应的 20 个
+attacked 回合仍进入 UA（攻击场景任务可用性）和 Targeted ASR（定向攻击成功率）的 Travel 分母，但必须在结果中单列；
+不能把“没有恶意工具候选可拦截”记为工具调用 interception（拦截）成功，也不能把它与基于工具比较的其余注入任务直接混成
+一个调用级召回结论。
+
+`matrix-run --resume`（矩阵断点续跑）按 `trial_id`（试验标识符）跳过所有已存在结果行，包括 `valid=false`（无效）的行；
+它不会自动优先重跑失败桶。无效行先原样保留并计入有效覆盖率；如需重跑，必须另建输出并预先声明重跑规则，不能从结果中挑出
+失败案例反复运行后择优替换。
 
 ## 10. 推荐运行顺序
 
