@@ -23,6 +23,9 @@ hf-fp8 = [
     "torch>=2.2,<3",
     "transformers>=4.45,<6",
 ]
+melon-openai = [
+    "openai>=1,<3",
+]
 
 [project.scripts]
 agent-defense = "agent_defense.cli:main"

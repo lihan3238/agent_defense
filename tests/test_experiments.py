@@ -19,7 +19,11 @@ from agent_defense.experiments import (
     run_hf_agentdojo_case,
 )
 from agent_defense.hf_llm import HuggingFaceToolCallingLLM
+from agent_defense.melon import PaperMelonToolCallDetector
+from agent_defense.melon_agentdojo import AgentDojoPaperMaskedReexecutionProvider
 from agent_defense.recording import JsonlActivationRecorder
+from agent_defense.semantic_embeddings import TransformersMeanPoolingEmbedder
+from agent_defense.types import RiskLevel
 
 
 def test_builtin_agentdojo_comparator_builds_without_loading_model() -> None:
@@ -45,6 +49,25 @@ def test_none_pipeline_keeps_auditable_executor_but_skips_activation_capture() -
     assert "/" not in pipeline.name
     assert executor is not None
     assert executor.gate.name == "none"
+
+
+def test_paper_melon_pipeline_builds_batch_abort_path_without_loading_models() -> None:
+    pipeline, executor = build_hf_experiment_pipeline(
+        "org/model-not-loaded-during-construction",
+        defense="melon_paper",
+        melon_embedding_backend="hf",
+        melon_embedding_model="org/embedder-not-loaded-during-construction",
+        local_files_only=True,
+    )
+
+    assert isinstance(pipeline, AgentPipeline)
+    assert executor is not None
+    assert executor.batch_preflight is True
+    assert executor.abort_episode_on_block is True
+    assert executor.gate.minimum_block_risk == RiskLevel.LOW
+    assert isinstance(executor.gate.detector, PaperMelonToolCallDetector)
+    assert isinstance(executor.gate.detector.embedder, TransformersMeanPoolingEmbedder)
+    assert isinstance(executor.masked_call_provider, AgentDojoPaperMaskedReexecutionProvider)
 
 
 def test_activation_recording_enables_capture_on_no_defense_pipeline(tmp_path) -> None:

@@ -26,9 +26,11 @@ untrusted tool output
   操作化 token（词元）、hook（钩子）、artifact（工件）和执行边界，不声称复现论文未公开的精确约定。
 - Direction（方向）是可解释基线；refusal direction（拒答方向）不等同于
   prompt-injection detector（提示注入检测器）。
-- MELON（掩码重执行检测方法）只称核心算法切片：已实现 masked re-execution（掩码重执行）、
+- 冻结结果中的 `melon` 只称 MELON（掩码重执行检测方法）核心算法切片：已实现 masked re-execution（掩码重执行）、
   cache（缓存）和 pre-action comparison（动作执行前比较）；hashing embedding（哈希嵌入）、单中性提示和
   block-then-continue（阻断后继续）都不同于论文完整配置。
+- 新增 `melon_paper` 是依据论文附录独立实现的兼容重建：按附录重建的少样本掩码轨迹、参数投影、语义嵌入接口、整批预检和
+  命中后回合终止；只有 `text-embedding-3-large` 后端对应论文发布代码，且尚无正式全量效果结果。
 - Detector（检测器）只打分，risk policy（风险策略）形成决策，executor（执行器）才执行
   allow/block（放行/阻断）。
 
@@ -40,6 +42,9 @@ untrusted tool output
 - Qwen3-8B one-task spike（单任务接线验证）只证明真实模型接线，不证明 probe 泛化。
 - 30-episode（30 回合）held-out（留出测试）矩阵已完成并人工审核；正式数字只维护在
   `reports/qwen3-heldout-matrix.md`。
+- `melon_paper` 的 16 配对 screening（筛选实验）共计划 64 回合，60 个有效；唯一阻断发生在 runtime（运行时）前，
+  但不匹配精确攻击参考调用，不能计为已验证恶意调用拦截。该筛选数字只维护在
+  `reports/melon-paper-screening.md`。
 - Qwen3-30B-A3B（通义千问 3，300 亿总参数/30 亿激活参数模型）FP8（8 位浮点）已通过
   layer-29 hidden-state（第 29 层隐藏状态）与
   native tool-call（原生工具调用）smoke。其预注册 screening（筛选实验）中 clean utility（无攻击任务可用性）通过；

@@ -10,6 +10,7 @@ from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.agent_pipeline.tool_execution import is_string_list, tool_result_to_str
 from agentdojo.functions_runtime import EmptyEnv, Env, FunctionCall, FunctionsRuntime
 from agentdojo.types import (
+    ChatAssistantMessage,
     ChatMessage,
     ChatToolResultMessage,
     ChatUserMessage,
@@ -130,17 +131,44 @@ class GuardedToolsExecutor(BasePipelineElement):
         masked_call_provider: MaskedCallProvider | None = None,
         recorder: JsonlActivationRecorder | None = None,
         tool_output_formatter: Callable[[Any], str] = tool_result_to_str,
+        batch_preflight: bool = False,
+        abort_episode_on_block: bool = False,
     ) -> None:
+        if abort_episode_on_block and not batch_preflight:
+            raise ValueError("abort_episode_on_block requires batch_preflight")
         self.gate = gate
         self.masked_call_provider = masked_call_provider
         self.recorder = recorder
         self.output_formatter = tool_output_formatter
+        self.batch_preflight = batch_preflight
+        self.abort_episode_on_block = abort_episode_on_block
         self.trace: list[DecisionTrace] = []
         self.activation_sample_ids: list[str | None] = []
 
     def reset_trace(self) -> None:
         self.trace.clear()
         self.activation_sample_ids.clear()
+
+    def _store_trace(self, state: dict[str, Any]) -> None:
+        state["agent_defense.trace"] = [
+            {
+                "tool": item.call.function,
+                "args": dict(item.call.args),
+                "risk": item.decision.risk.name.lower(),
+                "score": item.decision.observation.score,
+                "threshold": item.decision.observation.threshold,
+                "decision": item.decision.action.value,
+                "reason": item.decision.reason,
+                "runtime_invoked": item.runtime_invoked,
+                "tool_succeeded": item.tool_succeeded,
+                "executed": item.executed,
+                "latency_ms": item.decision.observation.latency_ms,
+                "details": dict(item.decision.observation.details),
+                "error": item.error,
+                "activation_sample_id": sample_id,
+            }
+            for item, sample_id in zip(self.trace, self.activation_sample_ids, strict=True)
+        ]
 
     def query(
         self,
@@ -172,7 +200,7 @@ class GuardedToolsExecutor(BasePipelineElement):
         tool_results: list[ChatToolResultMessage] = []
         function_names = {function.name for function in runtime.functions.values()}
 
-        for call in calls:
+        def evaluate(call: FunctionCall):
             candidate = _candidate(call)
             context = DetectionContext(
                 candidate=candidate,
@@ -185,7 +213,44 @@ class GuardedToolsExecutor(BasePipelineElement):
             activation_sample_id = None
             if self.recorder is not None:
                 activation_sample_id = self.recorder.record(context, decision)
+            return call, candidate, decision, activation_sample_id
 
+        prepared = [evaluate(call) for call in calls] if self.batch_preflight else None
+        if (
+            prepared is not None
+            and self.abort_episode_on_block
+            and any(item[2].action == DecisionAction.BLOCK for item in prepared)
+        ):
+            first_block = next(item for item in prepared if item[2].action == DecisionAction.BLOCK)
+            abort_error = f"episode_aborted_by_runtime_gate:{first_block[2].reason}"
+            for _, candidate, decision, activation_sample_id in prepared:
+                self.trace.append(
+                    DecisionTrace(
+                        candidate,
+                        decision,
+                        runtime_invoked=False,
+                        tool_succeeded=False,
+                        error=abort_error,
+                    )
+                )
+                self.activation_sample_ids.append(activation_sample_id)
+            state["agent_defense.abort_episode"] = True
+            state["agent_defense.abort_reason"] = first_block[2].reason
+            self._store_trace(state)
+            terminal = ChatAssistantMessage(
+                role="assistant",
+                content=[
+                    text_content_block_from_string(
+                        "The proposed actions match instructions recovered from untrusted tool "
+                        "outputs. MELON stopped this episode before any tool was executed."
+                    )
+                ],
+                tool_calls=None,
+            )
+            return query, runtime, env, [*messages[:-1], terminal], state
+
+        evaluations = prepared if prepared is not None else (evaluate(call) for call in calls)
+        for call, candidate, decision, activation_sample_id in evaluations:
             if decision.action == DecisionAction.BLOCK:
                 error = f"blocked_by_runtime_gate:{decision.reason}"
                 tool_results.append(
@@ -270,26 +335,29 @@ class GuardedToolsExecutor(BasePipelineElement):
             )
             self.activation_sample_ids.append(activation_sample_id)
 
-        state["agent_defense.trace"] = [
-            {
-                "tool": item.call.function,
-                "args": dict(item.call.args),
-                "risk": item.decision.risk.name.lower(),
-                "score": item.decision.observation.score,
-                "threshold": item.decision.observation.threshold,
-                "decision": item.decision.action.value,
-                "reason": item.decision.reason,
-                "runtime_invoked": item.runtime_invoked,
-                "tool_succeeded": item.tool_succeeded,
-                "executed": item.executed,
-                "latency_ms": item.decision.observation.latency_ms,
-                "details": dict(item.decision.observation.details),
-                "error": item.error,
-                "activation_sample_id": sample_id,
-            }
-            for item, sample_id in zip(self.trace, self.activation_sample_ids, strict=True)
-        ]
+        self._store_trace(state)
         return query, runtime, env, [*messages, *tool_results], state
+
+
+class _AbortAwareLLM(BasePipelineElement):
+    """Skip the loop's next model call after a paper-style episode abort."""
+
+    def __init__(self, delegate: BasePipelineElement) -> None:
+        self.delegate = delegate
+        self.name = getattr(delegate, "name", type(delegate).__name__)
+
+    def query(
+        self,
+        query: str,
+        runtime: FunctionsRuntime,
+        env: Env = _EMPTY_ENV,
+        messages: Sequence[ChatMessage] = (),
+        extra_args: dict[str, Any] | None = None,
+    ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict[str, Any]]:
+        state = {} if extra_args is None else dict(extra_args)
+        if state.get("agent_defense.abort_episode"):
+            return query, runtime, env, messages, state
+        return self.delegate.query(query, runtime, env, messages, state)
 
 
 def build_guarded_pipeline(
@@ -300,18 +368,23 @@ def build_guarded_pipeline(
     masked_call_provider: MaskedCallProvider | None = None,
     recorder: JsonlActivationRecorder | None = None,
     max_iters: int = 10,
+    batch_preflight: bool = False,
+    abort_episode_on_block: bool = False,
 ) -> tuple[AgentPipeline, GuardedToolsExecutor]:
     executor = GuardedToolsExecutor(
         gate,
         masked_call_provider=masked_call_provider,
         recorder=recorder,
+        batch_preflight=batch_preflight,
+        abort_episode_on_block=abort_episode_on_block,
     )
+    loop_llm = _AbortAwareLLM(llm) if abort_episode_on_block else llm
     pipeline = AgentPipeline(
         [
             SystemMessage(system_message),
             InitQuery(),
             llm,
-            ToolsExecutionLoop([executor, llm], max_iters=max_iters),
+            ToolsExecutionLoop([executor, loop_llm], max_iters=max_iters),
         ]
     )
     pipeline.name = f"{getattr(llm, 'name', 'local-model')}-{gate.name}"

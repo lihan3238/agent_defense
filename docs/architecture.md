@@ -166,7 +166,9 @@ ID（标识符）时会
 fail closed，必须从同一 checkpoint 重新采集和拟合；远端 Hugging Face 仓库仍由
 resolved immutable revision（解析后的不可变修订版本）绑定。
 
-## 7. MELON 核心算法切片
+## 7. 两条 MELON 路径
+
+### 7.1 冻结的 `melon` 哈希切片
 
 当前路径包含四个关键步骤：
 
@@ -210,6 +212,24 @@ MELON 的真实开销不仅是 `MelonToolCallDetector.inspect()`，还包括额�
 正式报告必须计量
 整条路径，不能只展示 scoring latency（打分延迟）；当前数值统一见
 [held-out 报告](../reports/qwen3-heldout-matrix.md#延迟与模型调用)。
+
+### 7.2 新增的 `melon_paper` 论文兼容路径
+
+`melon_paper` 不改写上述冻结基线，而是按论文 Appendix A.1–A.3（附录 A.1–A.3）独立重建
+few-shot masked prompt（少样本掩码提示）、虚构 `read_file("random.txt")` 输出包装、
+security-specific argument projection（安全专用参数投影）和 semantic embedding（语义嵌入）接口。
+
+该路径会先对本轮全部候选调用做 batch preflight（整批预检）。任意调用与掩码缓存的相似度严格高于 `0.8` 时，
+所有候选均不会进入 runtime；原 assistant message（助手消息）被替换成无工具调用的终止消息，因此 AgentDojo 不会把
+未执行候选误当作已完成动作。本项目独立 trace（轨迹）仍保留候选、分数和未执行状态，供面试审计。
+
+这里只保留跨步骤 tool-call cache（工具调用缓存），没有复制发布源码的 embedding cache（嵌入缓存）。整批终止和
+fail-closed（故障时默认阻断）是本仓库的工具边界语义；论文算法本身只规定返回攻击告警。论文附录与发布源码的两处提示文本冲突见
+[MELON 论文兼容重建](melon-reproduction.md)。
+
+`openai/text-embedding-3-large` 对应论文发布代码的 embedding backend（嵌入后端）；本地
+`sentence-transformers/all-MiniLM-L6-v2` 只用于无需外部接口的语义接线验证，结果必须分开命名。完整审计与协议见
+[MELON 论文兼容重建](melon-reproduction.md)。
 
 ## 8. Hugging Face 表示采集
 
@@ -265,10 +285,12 @@ hook（钩子）使用上下文管理器，异常退出时也会移除。Parser 
 - tool risk（工具风险）是名称级启发式，尚未做完整参数级授权策略。
 - 当前 held-out 只覆盖同一攻击模板和极小 user-task（用户任务）子集；正式限制与 probe 误阻分析见
   [held-out 报告](../reports/qwen3-heldout-matrix.md#证据边界)。
-- MELON slice（MELON 算法切片）没有 neutral-prompt ensemble（中性提示集成）、论文 §3.4 保证或命中后 episode abort 语义。
+- 冻结的 `melon` slice（MELON 算法切片）没有 neutral-prompt ensemble（中性提示集成）、论文 §3.4 保证或命中后
+  episode abort（回合终止）语义；新增 `melon_paper` 已实现终止语义和集成计算原语，但尚未产生正式全量效果表。
 - 首版表示防御要求一次只调用一个工具；多调用不会复用共享 activation，而会显式进入 detector-invalid 路径。
-- blocked call（已阻断调用）仍保留为“模型提出过的调用”并附带 blocked tool result，以维持消息协议；
+- `melon` 的 blocked call（已阻断调用）仍保留为“模型提出过的调用”并附带 blocked tool result，以维持消息协议；
   Banking checks（银行任务检查）主要按环境副作用判定。迁移到依赖 function-call trace（函数调用轨迹）的
-  suite（评测套件）时，必须区分 proposed（已提出）与 executed（已执行），重新验证指标语义。
+  suite（评测套件）时，必须区分 proposed（已提出）与 executed（已执行），重新验证指标语义。`melon_paper` 则在命中时
+  替换该候选消息，同时把 proposal（候选调用）保留在独立审计 trace 中。
 - 未知工具会拒绝执行，但当前 gate 决策先于工具存在性检查；正式安全审计仍需补充
   schema/unknown-tool（结构约束/未知工具）专项测试。

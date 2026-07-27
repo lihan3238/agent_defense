@@ -76,6 +76,7 @@ def test_manifest_load_is_strict_and_resolves_artifacts(tmp_path: Path) -> None:
         (lambda data: data["defenses"].append({"name": "unknown"}), "supported defense"),
         (lambda data: data["defenses"].append({"name": "none"}), "unique"),
         (lambda data: data.update({"defenses": [{"name": "melon"}]}), "melon_threshold"),
+        (lambda data: data.update({"defenses": [{"name": "melon_paper"}]}), "missing"),
         (
             lambda data: data.update({"defenses": [{"name": "activation_probe"}, {"name": "none"}]}),
             "artifact_path",
@@ -124,6 +125,29 @@ def test_trial_expansion_has_canonical_order_pairs_and_runner_kwargs(tmp_path: P
     assert probe["artifact_path"] == (tmp_path / "probe.json").resolve()
     assert probe["revision"] == "fixed-revision"
     assert "melon_threshold" not in probe
+
+
+def test_paper_melon_manifest_requires_explicit_embedding_identity() -> None:
+    data = _manifest()
+    data["defenses"] = [
+        {"name": "none"},
+        {
+            "name": "melon_paper",
+            "melon_threshold": 0.8,
+            "melon_embedding_backend": "openai",
+            "melon_embedding_model": "text-embedding-3-large",
+            "melon_embedding_device": "cpu",
+        },
+    ]
+
+    manifest = parse_manifest(data)
+    paper_trial = next(trial for trial in expand_trials(manifest) if trial.defense.name == "melon_paper")
+    kwargs = paper_trial.runner_kwargs()
+
+    assert kwargs["melon_threshold"] == 0.8
+    assert kwargs["melon_embedding_backend"] == "openai"
+    assert kwargs["melon_embedding_model"] == "text-embedding-3-large"
+    assert kwargs["melon_embedding_device"] == "cpu"
 
 
 def test_run_sequential_attaches_identity_and_rejects_runner_mismatch() -> None:

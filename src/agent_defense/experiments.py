@@ -23,10 +23,17 @@ from agent_defense.agentdojo_integration import (
 from agent_defense.artifacts import DetectorArtifact
 from agent_defense.detectors import MelonToolCallDetector, NoDefenseDetector, load_detector
 from agent_defense.hf_llm import HuggingFaceToolCallingLLM
+from agent_defense.melon import PaperMelonToolCallDetector, official_describe_tool_call
+from agent_defense.melon_agentdojo import AgentDojoPaperMaskedReexecutionProvider
 from agent_defense.policy import RuntimeGate
 from agent_defense.recording import JsonlActivationRecorder
+from agent_defense.semantic_embeddings import (
+    OpenAITextEmbeddingBackend,
+    TransformersMeanPoolingEmbedder,
+)
+from agent_defense.types import RiskLevel
 
-CustomDefense = Literal["none", "direction", "activation_probe", "melon"]
+CustomDefense = Literal["none", "direction", "activation_probe", "melon", "melon_paper"]
 BuiltinDefense = Literal[
     "repeat_user_prompt",
     "spotlighting_with_delimiting",
@@ -250,6 +257,9 @@ def build_hf_experiment_pipeline(
     disable_thinking: bool = False,
     local_files_only: bool = False,
     melon_threshold: float = 0.8,
+    melon_embedding_backend: Literal["hf", "openai"] = "hf",
+    melon_embedding_model: str | None = None,
+    melon_embedding_device: str = "cpu",
     recorder: JsonlActivationRecorder | None = None,
     run_metadata: Mapping[str, Any] | None = None,
 ) -> tuple[AgentPipeline, GuardedToolsExecutor | None]:
@@ -318,16 +328,41 @@ def build_hf_experiment_pipeline(
     elif defense == "melon":
         detector = MelonToolCallDetector(threshold=melon_threshold)
         provider = AgentDojoMaskedReexecutionProvider(llm)
+    elif defense == "melon_paper":
+        if melon_embedding_backend == "hf":
+            embedding_model = melon_embedding_model or "sentence-transformers/all-MiniLM-L6-v2"
+            embedder = TransformersMeanPoolingEmbedder(
+                embedding_model,
+                device=melon_embedding_device,
+                local_files_only=local_files_only,
+            )
+        elif melon_embedding_backend == "openai":
+            embedding_model = melon_embedding_model or "text-embedding-3-large"
+            embedder = OpenAITextEmbeddingBackend(embedding_model)
+        else:
+            raise ValueError(f"Unsupported MELON embedding backend: {melon_embedding_backend}")
+        detector = PaperMelonToolCallDetector(embedder, threshold=melon_threshold)
+        provider = AgentDojoPaperMaskedReexecutionProvider(
+            llm,
+            cache_key=official_describe_tool_call,
+        )
     else:
         assert artifact is not None
         detector = load_detector(artifact)
         provider = None
+    paper_abort = defense == "melon_paper"
+    gate = RuntimeGate(
+        detector,
+        minimum_block_risk=RiskLevel.LOW if paper_abort else RiskLevel.MEDIUM,
+    )
     return build_guarded_pipeline(
         llm,
-        RuntimeGate(detector),
+        gate,
         system_message=system_message,
         masked_call_provider=provider,
         recorder=recorder,
+        batch_preflight=paper_abort,
+        abort_episode_on_block=paper_abort,
     )
 
 
@@ -352,6 +387,9 @@ def run_hf_agentdojo_case(
     disable_thinking: bool = False,
     local_files_only: bool = False,
     melon_threshold: float = 0.8,
+    melon_embedding_backend: Literal["hf", "openai"] = "hf",
+    melon_embedding_model: str | None = None,
+    melon_embedding_device: str = "cpu",
     record_activations: str | Path | None = None,
     activation_label: int | None = None,
     activation_split: Literal["train", "calibration", "test"] = "train",
@@ -393,6 +431,9 @@ def run_hf_agentdojo_case(
         disable_thinking=disable_thinking,
         local_files_only=local_files_only,
         melon_threshold=melon_threshold,
+        melon_embedding_backend=melon_embedding_backend,
+        melon_embedding_model=melon_embedding_model,
+        melon_embedding_device=melon_embedding_device,
         recorder=recorder,
         run_metadata={
             "benchmark_version": benchmark_version,
@@ -490,26 +531,23 @@ def run_hf_agentdojo_case(
         call_observability = "guarded_executor_trace"
     attack_reference_trace = [item for item in trace if item["syntactic_attack_reference_match"]]
     masked_provider = executor.masked_call_provider if executor is not None else None
+    melon_provider_types = (AgentDojoMaskedReexecutionProvider, AgentDojoPaperMaskedReexecutionProvider)
     masked_reexecution_count = (
-        masked_provider.reexecution_count
-        if isinstance(masked_provider, AgentDojoMaskedReexecutionProvider)
-        else 0
+        masked_provider.reexecution_count if isinstance(masked_provider, melon_provider_types) else 0
     )
     masked_reexecution_elapsed_ms = (
-        masked_provider.reexecution_elapsed_ms
-        if isinstance(masked_provider, AgentDojoMaskedReexecutionProvider)
-        else 0.0
+        masked_provider.reexecution_elapsed_ms if isinstance(masked_provider, melon_provider_types) else 0.0
     )
     melon_generated_candidate_count = (
-        masked_provider.generated_candidate_count
-        if isinstance(masked_provider, AgentDojoMaskedReexecutionProvider)
-        else 0
+        masked_provider.generated_candidate_count if isinstance(masked_provider, melon_provider_types) else 0
     )
     melon_no_candidate_reexecution_count = (
         masked_provider.no_candidate_reexecution_count
-        if isinstance(masked_provider, AgentDojoMaskedReexecutionProvider)
+        if isinstance(masked_provider, melon_provider_types)
         else 0
     )
+    detector_embedder = getattr(executor.gate.detector, "embedder", None) if executor is not None else None
+    auxiliary_detector_call_count = getattr(detector_embedder, "request_count", 0)
     return {
         "status": status,
         "valid": valid,
@@ -525,6 +563,24 @@ def run_hf_agentdojo_case(
         "injection_task_id": injection_task_id if attacked else None,
         "attack": attack_name if attacked else None,
         "defense": defense,
+        "melon_profile": (
+            "hashing_slice"
+            if defense == "melon"
+            else "paper_prompt_projection"
+            if defense == "melon_paper"
+            else None
+        ),
+        "melon_embedding_backend": melon_embedding_backend if defense == "melon_paper" else None,
+        "melon_embedding_model": (
+            melon_embedding_model
+            or (
+                "sentence-transformers/all-MiniLM-L6-v2"
+                if melon_embedding_backend == "hf"
+                else "text-embedding-3-large"
+            )
+            if defense == "melon_paper"
+            else None
+        ),
         "seed": seed,
         "attacked": attacked,
         "utility_passed": bool(utility),
@@ -549,7 +605,7 @@ def run_hf_agentdojo_case(
         "masked_reexecution_elapsed_ms": masked_reexecution_elapsed_ms,
         "melon_generated_candidate_count": melon_generated_candidate_count,
         "melon_no_candidate_reexecution_count": melon_no_candidate_reexecution_count,
-        "auxiliary_detector_call_count": None if executor is None else 0,
+        "auxiliary_detector_call_count": (None if executor is None else auxiliary_detector_call_count),
         "timing_relationships": [
             "elapsed_ms excludes model loading and includes all in-episode defense work.",
             "model_generate_elapsed_ms includes primary and MELON masked generations.",
@@ -597,7 +653,16 @@ def run_hf_agentdojo_case(
         "limitations": [
             "A completed run is one sample, not an effectiveness claim.",
             "AgentDojo may conservatively count some runtime/model failures as attack success; inspect logs.",
-            "MELON here uses a deterministic local hashing embedder, not the paper's embedding backend.",
+            (
+                "MELON hashing_slice uses a deterministic local hashing embedder."
+                if defense == "melon"
+                else (
+                    "MELON paper_prompt_projection reproduces the paper prompt and argument projection; "
+                    "only the openai/text-embedding-3-large setting matches the paper embedding backend."
+                    if defense == "melon_paper"
+                    else "No MELON-specific limitation applies to this defense."
+                )
+            ),
             (
                 "Syntactic attack-reference matches use raw model arguments before runtime schema "
                 "coercion. They are diagnostics, not reviewed malicious-call labels."

@@ -141,7 +141,7 @@ agentdojo-run
 |---|---|---|
 | synthetic teaching demo（合成教学演示） | allow/block 控制流与指标代码可运行 | 真实模型检测效果 |
 | AgentDojo boundary contract（边界契约） + HF（Hugging Face 模型库）wiring spike（接线验证） | block 位于真实 runtime 副作用之前；本地模型可同时给出调用和隐藏状态 | probe 泛化 |
-| Qwen3-8B held-out matrix | 同一攻击模板下跨 3 个 user task 的小型工程对比 | 统计显著性、跨模板或跨模型泛化 |
+| Qwen3-8B held-out matrix（留出测试矩阵） | 同一攻击模板下跨 3 个 user task 的小型工程对比 | 统计显著性、跨模板或跨模型泛化 |
 | Qwen3-30B screening 负结果 | 更大 FP8（8 位浮点）模型的白盒接线；exact target（精确目标）与有害 near-miss（近似但未命中）调用的口径差 | 任何 30B 防御效果；本轮在 held-out 前停止 |
 
 工程快照和 one-task（单任务）接线历史见
@@ -168,6 +168,8 @@ Refusal Direction（拒答方向）、PVDetector（投影向量检测器）和 T
 - [跨模型复核协议](docs/cross-model-replication.md)：Qwen3-30B 预注册、screening 负结果、停止决策和未执行阶段。
 - [架构说明](docs/architecture.md)：稳定设计与实现语义。
 - [实验协议](docs/experiment-protocol.md)：split（数据划分）、阈值、指标、有效性和完整复现命令。
+- [MELON 论文兼容重建](docs/melon-reproduction.md)：官方源码审计、按论文附录重建的掩码轨迹、语义嵌入、629 案例协议与不可复现项。
+- [MELON 论文兼容筛选报告](reports/melon-paper-screening.md)：16 个预注册配对、64 回合有效性、掩码候选稀疏和唯一阻断审核。
 - [面试讲解指南](docs/interview-guide.md)：两分钟话术、简历映射和高频追问。
 - [正式 held-out 报告](reports/qwen3-heldout-matrix.md)：唯一完整结果表。
 - [30B screening 补充报告](reports/qwen3-30b-screening.md)：白盒接线、exact-target near miss 与 continuation gate。
@@ -175,9 +177,11 @@ Refusal Direction（拒答方向）、PVDetector（投影向量检测器）和 T
 ## 项目边界
 
 - 当前只覆盖 AgentDojo Banking、一个攻击模板和极小 held-out 分母，不声称 SOTA 或泛化。
+- 新增 `melon_paper` 作为独立的论文兼容重建路径；它不改写 `melon` 哈希切片或既有冻结结果，16 配对筛选已完成，
+  但尚未产生正式全量效果表。
 - Qwen3-8B 是唯一正式防御效果矩阵；30B 只完成 no-defense（无防御）screening，没有 artifact（工件）、
   calibration 或 held-out 结果。
-- MELON 路径是独立实现的核心算法切片；hashing embedding（哈希嵌入）、单中性提示和“阻断后继续”均不同于论文完整配置。
+- `melon` 路径是独立实现的核心算法切片；hashing embedding（哈希嵌入）、单中性提示和“阻断后继续”均不同于论文完整配置。
 - `tool_input` 是 CLI（命令行界面）名称，artifact 中的精确定义是 `generation_prefill_last_nonpad`，不是注入文本末
   token（词元）。
 - 默认只执行 AgentDojo 沙箱工具；不连接真实银行、邮件、账户、文件系统或 shell（命令行外壳）。

@@ -147,6 +147,12 @@ tool outputs
 Masked generation（掩码生成）发生在 scoring（打分）前，所以它的主要开销不在 `detector_latency_ms` 中，但会进入
 episode 端到端时间和模型调用数。
 
+论文兼容路径额外阅读 [`melon.py`](../src/agent_defense/melon.py)、
+[`melon_agentdojo.py`](../src/agent_defense/melon_agentdojo.py) 和
+[`semantic_embeddings.py`](../src/agent_defense/semantic_embeddings.py)：它们分别负责论文参数投影/语义比较、按论文附录重建的掩码轨迹，
+以及 OpenAI（模型服务提供方）/本地 Hugging Face（模型库）嵌入后端。`melon_paper` 会整批预检本轮调用，并在任意命中时
+替换候选消息、终止回合；这一语义不适用于冻结的 `melon` 结果。
+
 ### No defense（无防御）
 
 `NoDefenseDetector` 始终返回有效且不触发的 observation；自定义 executor 仍保留完整 trace。因此 none（无防御）

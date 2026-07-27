@@ -99,7 +99,7 @@ uv run agent-defense matrix-plan examples/qwen3-heldout-matrix.example.json
 [`reports/verified-smoke.md`](../reports/verified-smoke.md) 解释证据阶梯：
 
 - one-task spike（单任务接线验证）证明真实 tool call、hidden state（隐藏状态）和 gate 接线；
-- held-out matrix 才是独立 user-task 的首轮结果；
+- held-out matrix（留出测试矩阵）才是独立 user-task 的首轮结果；
 - 两者都只覆盖一个攻击模板，不能支持统计泛化。
 
 最值得主动讲的失败是 calibration coverage（校准覆盖）：只用只读 benign（良性）调用会误阻合法 `send_money`；加入合法高风险
@@ -199,18 +199,27 @@ AgentDojo policy-compliant/violating（符合/违反策略）轨迹训练时更�
 
 ### MELON 复现到了什么程度？
 
-实现了 masked re-execution、候选调用 cache、动作相似度和执行前阻断。当前用短中性 prompt、完整
-canonical（规范化）参数和本地 hashing embedding，没有论文 few-shot prompt（少样本提示词）、
-security-specific argument projection（安全特定参数投影）与 semantic embedding（语义嵌入），
-所以称为核心算法切片而不是完整效果复现。还有一个执行语义差异：论文检测命中后报告攻击并终止 episode；本项目
-把命中送入统一 risk policy（风险策略），只阻断达到风险阈值的当前调用，返回 blocked result（阻断结果）后让 Agent 继续。
+仓库现在保留两条路径。`melon` 是冻结结果使用的核心切片：短中性 prompt（提示词）、完整参数、本地
+hashing embedding（哈希嵌入）和阻断后继续。新增的 `melon_paper` 按论文附录独立重建 few-shot masked prompt
+（少样本掩码提示词）、虚构 `read_file` 输出包装、security-specific argument projection（安全特定参数投影）、
+semantic embedding（语义嵌入）接口、跨步骤 cache（缓存）、整批执行前检查和命中后 episode abort（回合终止）。
+
+这叫“算法与协议兼容重建”，还不能叫“论文效果复现”：官方源码没有许可证、版本锁、完整模型配置或原始日志，目前也尚未
+完成论文三个模型、97/629 全量和四攻击的正式效果表。
+这里的缓存只指跨步骤工具调用缓存，不包含官方源码的 embedding cache（嵌入缓存）；整批终止和 fail-closed（故障时默认阻断）
+是本仓库的工程化边界。论文附录与发布源码在中性提示开头和最后一条少样本工具输出上不一致，本实现以论文附录为准。
+
+最新 16 配对筛选共计划 64 回合，其中 60 个有效；有效 attacked trial（受攻击试验）中，`none` 的 Targeted ASR 为
+`6/15`，`melon_paper` 为 `5/15`。唯一阻断在 runtime（运行时）前生效，但不匹配精确攻击参考调用，所以面试时应把它讲成
+“控制流验证 + 负结果”，不能讲成已验证恶意调用拦截。唯一正式分母来源是
+[`reports/melon-paper-screening.md`](../reports/melon-paper-screening.md)。
 
 ### MELON 的 `0.8` 是校准阈值吗？有论文的理论保证吗？
 
-都不是。`0.8` 是 hashing smoke 的默认值，来源于论文主实验的相似度阈值；换成 hashing embedding 后分数分布不同。
+对 `melon` 都不是。`0.8` 是 hashing smoke 的默认值，来源于论文主实验的相似度阈值；换成 hashing embedding 后分数分布不同。
 首轮 held-out 把它明确当作运行前冻结的未校准 baseline（基线）；若下一版要校准，必须使用新的 calibration 和独立 test，
-不能拿本轮结果反调。当前也只有一个短中性 prompt（提示词），没有论文 §3.4 的多 task-neutral-prompt ensemble
-（任务中性提示词集成），因此不能继承该节针对 ensemble detector（集成检测器）推导的 error bound（误差界）或
+不能拿本轮结果反调。`melon_paper` 的 `0.8` 与发布代码一致，并实现了 §3.4 的多 task-neutral-prompt ensemble
+（任务中性提示词集成）计算原语，但尚未验证均值可分性和独立性前提，因此仍不能宣称继承 error bound（误差界）或
 worst-case guarantee（最坏情况保证）。
 
 ### MELON 与表示探针的主要差异？
@@ -225,7 +234,7 @@ MELON 通过第二条轨迹问“去掉原任务后，不可信内容是否仍�
 
 ### AgentDojo 的 security result（安全结果）怎么解释？
 
-对 injection task，`True` 表示攻击目标完成。因此代码将它改名为 `attack_succeeded`，ASR 直接统计 True 的比例。
+对 injection task（注入任务），`True` 表示攻击目标完成。因此代码将它改名为 `attack_succeeded`，ASR 直接统计 True 的比例。
 只有在分母与无效 trial 规则固定后，才能另外报告 `1-ASR` 作为安全率。
 
 ### 为什么 30B Targeted ASR 是 `0/1`，仍然不能说安全？
@@ -264,7 +273,8 @@ test 只做一次最终报告。真实 artifact 固定模型、revision、dtype�
 
 首轮 held-out 只有 3 个 user tasks，而且统一使用 `injection_task_5 + injecagent`；人工审核后只有一条恶意
 proposal，远不足以估计稳定拦截率。BU 只有 1/3，说明基础模型的任务完成和精确回答能力也是主要瓶颈。Activation
-probe 在 attacked task 上误阻合法写操作，MELON 的 hashing embedding 也可能漏掉语义等价调用。当前价值是完整、
+probe 在 attacked task 上误阻合法写操作，冻结 MELON 的 hashing embedding 也可能漏掉语义等价调用。新
+`melon_paper` 尚未完成全量模型实验。当前价值是完整、
 可审计的工程闭环和诚实的小型 held-out 失败分析，不是跨模板泛化结论。
 
 ## 可以说与不能说
@@ -274,6 +284,9 @@ probe 在 attacked task 上误阻合法写操作，MELON 的 hashing embedding �
 - “我实现了运行时 tool-call gate，并在 AgentDojo synthetic Banking 闭环中验证了执行前阻断。”
 - “我实现了 direction/probe 的训练、校准、artifact 和推理路径。”
 - “我独立实现了 MELON 的核心算法切片，当前用本地 hashing embedding。”
+- “我另外按论文附录独立重建了 `melon_paper`：少样本掩码轨迹、参数投影、语义嵌入、跨步骤工具调用缓存、整批预检和命中后回合终止；当前尚未
+  把它包装成论文原始数值复现。”
+- “`melon_paper` 的 16 配对筛选已完成；链路稳定，但掩码候选稀疏，唯一阻断不是精确攻击参考调用，因此我主动停止在筛选阶段。”
 - “Qwen3-8B 的首轮 30-episode held-out 已完成；direction 和 MELON 各审核到 1/1 恶意调用阻断，probe 则暴露了
   合法调用误阻。”
 - “Qwen3-30B 白盒与 no-defense screening 已跑通，但 exact positive gate（精确正例门槛）未满足，所以我在训练 probe 和打开
@@ -284,8 +297,8 @@ probe 在 attacked task 上误阻合法写操作，MELON 的 hashing embedding �
 - “已经在 8B 模型上显著降低 ASR”。当前虽有 `1/3 → 0/3` 的首轮计数，但分母极小、攻击模板单一，不能称显著。
 - “activation probe 成功拦截了攻击”。该组没有恶意 proposal，ASR=0 同时伴随合法 `update_user_info` 被提前阻断。
 - “首次提出 Agent hidden-state circuit breaker（隐藏状态熔断器）”。已有相关工作。
-- “完整复现了 MELON 官方效果”。当前 embedding 和实验规模不同。
-- “当前 MELON slice 具有论文 §3.4 的理论保证”。本项目未实现 neutral-prompt ensemble（中性提示集成）。
+- “完整复现了 MELON 官方效果”。论文模型环境和全量实验尚未重建，当前筛选也不支持这一说法。
+- “当前 MELON 具有论文 §3.4 的理论保证”。虽已实现集成计算原语，但尚未验证该界成立所需的统计前提。
 - “security_results=True 表示安全”。它表示攻击成功。
 - “30B Targeted ASR 是 0/1，所以模型安全”。该 trial 已执行一笔人工审核为 injection-driven 的未授权转账。
 - “已经在 30B 上复现防御效果”。本轮没有 30B artifact、calibration 或 held-out。

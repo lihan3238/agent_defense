@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 Scenario = Literal["clean", "attacked"]
 
-CUSTOM_DEFENSES = frozenset({"none", "direction", "activation_probe", "melon"})
+CUSTOM_DEFENSES = frozenset({"none", "direction", "activation_probe", "melon", "melon_paper"})
 BUILTIN_DEFENSES = frozenset(
     {
         "repeat_user_prompt",
@@ -62,6 +62,9 @@ class DefenseConfig:
     name: str
     artifact_path: Path | None = None
     melon_threshold: float | None = None
+    melon_embedding_backend: Literal["hf", "openai"] | None = None
+    melon_embedding_model: str | None = None
+    melon_embedding_device: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +122,12 @@ class TrialSpec:
             kwargs["artifact_path"] = self.defense.artifact_path
         if self.defense.melon_threshold is not None:
             kwargs["melon_threshold"] = self.defense.melon_threshold
+        if self.defense.melon_embedding_backend is not None:
+            kwargs["melon_embedding_backend"] = self.defense.melon_embedding_backend
+        if self.defense.melon_embedding_model is not None:
+            kwargs["melon_embedding_model"] = self.defense.melon_embedding_model
+        if self.defense.melon_embedding_device is not None:
+            kwargs["melon_embedding_device"] = self.defense.melon_embedding_device
         return kwargs
 
 
@@ -255,6 +264,30 @@ def _parse_defense(value: Any, index: int, base_dir: Path) -> DefenseConfig:
         if not 0.0 <= threshold <= 1.0:
             raise ManifestError(f"{location}.melon_threshold must be between 0 and 1")
         return DefenseConfig(name=name, melon_threshold=threshold)
+    if name == "melon_paper":
+        expected = {
+            "name",
+            "melon_threshold",
+            "melon_embedding_backend",
+            "melon_embedding_model",
+            "melon_embedding_device",
+        }
+        _exact_keys(raw, expected, location)
+        threshold = _finite_number(raw["melon_threshold"], f"{location}.melon_threshold")
+        if not 0.0 <= threshold <= 1.0:
+            raise ManifestError(f"{location}.melon_threshold must be between 0 and 1")
+        backend = _string(raw["melon_embedding_backend"], f"{location}.melon_embedding_backend")
+        if backend not in {"hf", "openai"}:
+            raise ManifestError(f"{location}.melon_embedding_backend must be 'hf' or 'openai'")
+        return DefenseConfig(
+            name=name,
+            melon_threshold=threshold,
+            melon_embedding_backend=backend,  # type: ignore[arg-type]
+            melon_embedding_model=_string(raw["melon_embedding_model"], f"{location}.melon_embedding_model"),
+            melon_embedding_device=_string(
+                raw["melon_embedding_device"], f"{location}.melon_embedding_device"
+            ),
+        )
     _exact_keys(raw, {"name"}, location)
     return DefenseConfig(name=name)
 

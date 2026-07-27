@@ -7,6 +7,7 @@ from agent_defense.detectors import (
     MelonToolCallDetector,
     NoDefenseDetector,
 )
+from agent_defense.melon import PaperMelonToolCallDetector
 from agent_defense.policy import RuntimeGate, ToolRiskPolicy
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "LinearProbeDetector",
     "MelonToolCallDetector",
     "NoDefenseDetector",
+    "PaperMelonToolCallDetector",
     "RuntimeGate",
     "ToolRiskPolicy",
 ]

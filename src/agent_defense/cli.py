@@ -914,6 +914,7 @@ def matrix_summarize(results: Path) -> None:
             "direction",
             "activation_probe",
             "melon",
+            "melon_paper",
             "repeat_user_prompt",
             "spotlighting_with_delimiting",
             "transformers_pi_detector",
@@ -944,6 +945,24 @@ def matrix_summarize(results: Path) -> None:
     help="Keep the main LLM and any auxiliary Transformers detector offline; all weights must be cached.",
 )
 @click.option("--melon-threshold", type=click.FloatRange(-1.0, 1.0), default=0.8, show_default=True)
+@click.option(
+    "--melon-embedding-backend",
+    type=click.Choice(["hf", "openai"]),
+    default="hf",
+    show_default=True,
+    help="Semantic embedding backend used only by defense=melon_paper.",
+)
+@click.option(
+    "--melon-embedding-model",
+    default=None,
+    help="Override the semantic embedding model used by defense=melon_paper.",
+)
+@click.option(
+    "--melon-embedding-device",
+    default="cpu",
+    show_default=True,
+    help="Device for the local Hugging Face embedding model.",
+)
 @click.option(
     "--record-activations",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -977,6 +996,9 @@ def agentdojo_run(
     disable_thinking: bool,
     local_files_only: bool,
     melon_threshold: float,
+    melon_embedding_backend: str,
+    melon_embedding_model: str | None,
+    melon_embedding_device: str,
     record_activations: Path | None,
     activation_label: int | None,
     activation_split: str,
@@ -1009,6 +1031,9 @@ def agentdojo_run(
             disable_thinking=disable_thinking,
             local_files_only=local_files_only,
             melon_threshold=melon_threshold,
+            melon_embedding_backend=melon_embedding_backend,  # type: ignore[arg-type]
+            melon_embedding_model=melon_embedding_model,
+            melon_embedding_device=melon_embedding_device,
             record_activations=record_activations,
             activation_label=activation_label,
             activation_split=activation_split,  # type: ignore[arg-type]
