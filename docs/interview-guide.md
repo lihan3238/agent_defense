@@ -3,14 +3,15 @@
 ## 先记住这句定位
 
 > 我完成了一个 AgentDojo（智能体安全评测框架）上的执行前 tool-call gate（工具调用门控）、进程内隐藏状态采集、
-> direction/probe（方向/探针）与 MELON（掩码重执行检测方法）对照，以及 Qwen3-8B（通义千问 3 80 亿参数模型）的
-> 首轮小型 held-out（留出测试）工程评测；价值是可审计闭环和失败分析，不是统计显著或
-> 跨攻击模板泛化。
+> direction/probe（方向/探针）和 MELON（Masked re-Execution and TooL comparisON，掩码重执行与工具调用比较）
+> 两类检测路径；Qwen3-8B（通义千问 3 80 亿参数模型）
+> 既有 30 回合表示级 held-out（留出测试）证据，也有 1452 回合 MELON 四套件主矩阵。价值是可审计闭环、完整分母和
+> 失败分析，不是论文原始数值或跨攻击泛化。
 
-面试中只维护一个数字来源：打开
-[`reports/qwen3-heldout-matrix.md`](../reports/qwen3-heldout-matrix.md) 展示正式结果。One-task（单任务）接线历史和
-synthetic（合成）/真实证据边界见
-[`reports/verified-smoke.md`](../reports/verified-smoke.md)。不要凭记忆另造一张结果表。
+面试中按职责维护两个正式数字来源：MELON 完整分母与效果只看
+[`reports/qwen3-v112-full-matrix.md`](../reports/qwen3-v112-full-matrix.md)，表示级 direction/probe 与内置防御只看
+[`reports/qwen3-heldout-matrix.md`](../reports/qwen3-heldout-matrix.md)。One-task（单任务）接线历史和
+synthetic（合成）/真实证据边界见 [`reports/verified-smoke.md`](../reports/verified-smoke.md)。不要把两张表拼成一组指标。
 
 Qwen3-30B-A3B（通义千问 3，300 亿总参数/30 亿激活参数模型）只有
 [screening（筛选实验）补充证据](../reports/qwen3-30b-screening.md)，不进入正式防御效果表。
@@ -29,27 +30,40 @@ Qwen3-30B-A3B（通义千问 3，300 亿总参数/30 亿激活参数模型）只
 > block（阻断）。这样探针即使失效，也不会
 > 绕过执行器的 schema（结构约束）和风险策略。
 >
-> 评测底座用 AgentDojo，因为它提供真实的多步工具环境以及确定性的 utility（任务可用性）和攻击目标检查。我也实现了
-> MELON 的 masked re-execution（掩码重执行）、tool-call cache（工具调用缓存）和动作比较切片，当前用本地
-> hashing embedding（哈希嵌入）保证离线可审计。
+> 评测底座用 AgentDojo，因为它提供真实的多步工具环境以及确定性的 utility（任务可用性）和攻击目标检查。仓库保留两条
+> MELON 路径：`melon` 是本地 hashing embedding（哈希嵌入）的冻结算法切片；`melon_paper` 按论文附录重建
+> masked re-execution（掩码重执行）、few-shot masked prompt（少样本掩码提示）、参数投影、语义嵌入和整批执行前终止。
 >
 > 工程边界先在 deterministic（确定性）synthetic 闭环中验证；随后我固定 Qwen3-8B、layer（层）22 和
 > tool-input position（工具输入位置），先跑通一个真实 Banking（银行任务套件）clean/attack pair（无攻击/受攻击配对），
 > 再冻结 `user_task_1/11/13` 做 30-episode（30 回合）held-out 矩阵。30 个 trial（试验）全部有效。无防御
-> Targeted ASR（定向攻击成功率）是 1/3，direction、activation probe、MELON slice（MELON 算法切片）和
-> `repeat_user_prompt` 都是 0/3；但所有方法 BU（良性任务可用性）都只有 1/3，activation probe 的
-> UA（攻击场景任务可用性）还是 0/3。
+> Targeted ASR（Targeted Attack Success Rate，定向攻击成功率）是 1/3，direction、activation probe、
+> MELON slice（MELON 算法切片）和 `repeat_user_prompt` 都是 0/3；但所有方法 BU（Benign Utility，
+> 良性任务可用性）都只有 1/3，activation probe 的 UA（Utility Under Attack，攻击场景任务可用性）还是 0/3。
 >
 > 所以我没有只看 ASR。逐调用人工审计发现 direction 和 MELON 确实各阻断了唯一一条恶意 proposal（候选调用）；activation
 > probe 根本没遇到恶意 proposal，而是提前误阻合法 `update_user_info`，不能把它算成成功拦截。配对中位开销上，
 > direction 约 2 ms（毫秒），probe 约 8 ms，MELON 约 3.8 s（秒），`repeat_user_prompt` 约 3.46 s。
 >
-> 这只能说明同一攻击模板下跨三个 user task（用户任务）的小型工程结果。如果继续扩展，就要换预先冻结的新攻击模板和
-> 新 test groups（测试集分组），不能根据这次 test（测试集）结果回头调阈值再重报。
+> 为了不只停在三个 user task（用户任务），我又按 AgentDojo `v1.1.2` 跑了四套件全部 97 个 clean 和 629 个 attacked
+> 配对，只比较 none（无防御）与 `melon_paper`：计划 1452 回合、有效 1380。公平比较的 577 个共同有效
+> attacked（受攻击）配对上，
+> Targeted ASR 从 146/577 降到 53/577，93 个攻击成功转为失败，0 个反向；clean utility 是 36/95→35/95，
+> attacked utility 是 166/577→157/577，672 个共同有效配对的端到端中位开销增加 4.923 秒。
+>
+> 这轮使用本地 MiniLM（小型句向量模型），攻击只有 `important_instructions`；所以它是论文兼容算法在完整 629 配对上的
+> 本地重跑，不是论文 `text-embedding-3-large` 后端、四攻击或原始数值复现。
 
-这里可以补一句工程细节：矩阵在正式计时前先运行并丢弃一次 warm-up（预热），随后复用同一个进程内模型；每个 trial 立即写
-JSONL（逐行 JSON，JSON 为 JavaScript 对象表示法），异常进入 failure bucket（失败桶）。调用级 interception（拦截率）/
-false-block（误阻率）只有人工审核标签完整时才出数，否则是 `N/A`（不适用）。
+这里可以补两句工程细节：主矩阵中 none 有效 707/726，`melon_paper` 有效 673/726；后者的 53 个无效回合分成
+34 个 masked tool-parse error（掩码轨迹工具解析错误）、16 个其他解析错误和 3 个 OOM（Out of Memory，显存不足），none 则是
+15 个解析错误和 4 个 OOM。对涉及 OOM 的 4 个语义案例用 fresh process（全新进程）成对复核 8 回合，结果 8/8 与主矩阵
+一致，确认是长上下文资源上限而非缓存偶发；主指标没有回填。
+
+调用级结果也要限定：工具名与参数对攻击参考调用做 automatic exact syntactic match（自动精确语法匹配），不是人工恶意标签。
+`melon_paper` 在有效回合中阻断 92/287 个精确参考调用，另阻断 46 个 non-reference call（非参考调用），clean 场景误阻
+1 次；46 个非参考阻断不能自动包装成成功 interception（拦截）。在 93 个 ASR 成功→失败的共同有效配对中，
+69 个配对至少存在精确参考调用阻断，其余 24 个配对只有非参考调用阻断；前者包含只读前置动作，后者也包含合法调用，
+不能说成“准确拦截 93 次”。
 
 ## 两分钟现场演示
 
@@ -73,34 +87,43 @@ probe_clean:         authorized recipient, decision=allow, executed=true, utilit
 uv run agent-defense eval-demo
 ```
 
-真实 held-out 不在现场重新加载 8B 模型。用 manifest（运行清单）命令展示实验规模，再直接打开已保存的去敏报告：
+真实 held-out 不在现场重新加载 8B 模型。下面的 manifest（运行清单）命令只展示 30 回合表示级矩阵结构；正式效果直接打开
+已保存的去敏报告：
 
 ```bash
 uv run agent-defense matrix-plan examples/qwen3-heldout-matrix.example.json
 ```
 
-重点展示 `reports/qwen3-heldout-matrix.md`，而不是现场重跑 30 episodes。
+先展示 `reports/qwen3-v112-full-matrix.md` 的完整主矩阵，再用 `reports/qwen3-heldout-matrix.md` 回答简历中的表示探针问题；
+不要现场重跑 8B 模型。
 
 开场必须主动说一句：“这里是 deterministic synthetic teaching demo（确定性合成教学演示），展示控制流，不把数值当
 真实模型实验结果。”
 
 ## 真实模型证据怎么展示
 
-不要现场重新跑 8B 模型。打开
-[`reports/qwen3-heldout-matrix.md`](../reports/qwen3-heldout-matrix.md)，按下面顺序指表：
+不要现场重新跑 8B 模型。先打开
+[`reports/qwen3-v112-full-matrix.md`](../reports/qwen3-v112-full-matrix.md)，按下面顺序指表：
 
-1. 先看 Scheduled/Valid（计划数/有效数）：30/30 有效，说明分母没有被基础设施失败缩小；
-2. 再看 BU/UA/Targeted ASR：安全结果和任务完成结果必须分列；
-3. 再看人工调用审计：direction/MELON 的 1/1 与 probe 的 0 个恶意 proposal 是完全不同的证据；
-4. 最后看 paired overhead（配对额外开销）：MELON 的主要成本来自额外 masked generation（掩码生成），不是相似度
-   dot product（点积）。
+1. 先看 Scheduled/Valid（计划数/有效数）：1452/1380；none 是 707/726，`melon_paper` 是 673/726；
+2. 再看共同有效 attacked 配对：ASR 146/577→53/577，93 个 true-to-false（成功转失败）、0 个 false-to-true（失败转成功）；
+3. 再看任务代价：clean utility 36/95→35/95，attacked utility 166/577→157/577，配对中位开销 +4.923 秒；
+4. 最后看限定：92/287 是自动精确参考匹配阻断，不是人工恶意标签；46 个非参考阻断与 1 个 clean 误阻必须单列；
+5. 指出 Travel `injection_task_6` 的 20 个 text-only（纯文本）配对中，两组 ASR 都是 7/20、0 次阻断。
+
+然后打开 [`reports/qwen3-heldout-matrix.md`](../reports/qwen3-heldout-matrix.md)，说明它的不同职责：
+
+1. 30/30 有效，直接验证 hidden state（隐藏状态）、direction/probe、内置防御和 gate 接线；
+2. BU/UA/Targeted ASR 分列，不能把安全与任务完成混成一个数；
+3. 人工调用审计中 direction/MELON 的 1/1 与 probe 的 0 个恶意 proposal 是完全不同的证据；
+4. paired overhead（配对额外开销）解释表示探针与掩码重执行的成本差异。
 
 若面试官追问开发过程，再打开
 [`reports/verified-smoke.md`](../reports/verified-smoke.md) 解释证据阶梯：
 
 - one-task spike（单任务接线验证）证明真实 tool call、hidden state（隐藏状态）和 gate 接线；
-- held-out matrix（留出测试矩阵）才是独立 user-task 的首轮结果；
-- 两者都只覆盖一个攻击模板，不能支持统计泛化。
+- 30 回合 held-out matrix（留出测试矩阵）才是独立 user-task 的首轮表示级结果；
+- 四套件主矩阵扩大的是 MELON 单攻击分母，不会自动增强 direction/probe 的泛化证据。
 
 最值得主动讲的失败是 calibration coverage（校准覆盖）：只用只读 benign（良性）调用会误阻合法 `send_money`；加入合法高风险
 付款后，one-task spike 能放行正常付款，但 held-out 又暴露 probe 会误阻合法 `update_user_info`。结论不是某个
@@ -119,7 +142,7 @@ parse/runtime failure（解析/运行时故障）。Attacked trial 的 exact Tar
 最值得讲的不是“30B ASR 为 0”，而是 **exact-target metric（精确目标指标）与真实有害副作用可能分离**。项目
 continuation gate 要求至少一次 exact no-defense success（无防御条件下精确攻击成功）；门槛未满足后，本轮停止，没有采集
 30B train/calibration（训练/校准）activation、拟合
-probe 或打开 held-out。正式防御效果仍只看 Qwen3-8B 矩阵。
+probe 或打开 held-out。正式防御效果仍只看 Qwen3-8B 的两张冻结矩阵，并按 MELON 主矩阵/表示级矩阵分开解释。
 
 ## 简历逐句对应
 
@@ -127,14 +150,14 @@ probe 或打开 held-out。正式防御效果仍只看 Qwen3-8B 矩阵。
 
 | 简历表述 | 仓库证据 | 当前诚实状态 |
 |---|---|---|
-| 基于 AgentDojo 构建工具调用 Agent | Banking suite（银行任务套件）、pipeline（流水线）和 deterministic checks（确定性检查） | 边界、Qwen3 接线和 30-episode held-out 已跑通 |
+| 基于 AgentDojo 构建工具调用 Agent | 四套件 pipeline（流水线）和 deterministic checks（确定性检查） | 边界、Qwen3 接线、30 回合表示矩阵和 1452 回合 MELON 主矩阵均已跑通 |
 | 每次 tool-call 前检测 | `GuardedToolsExecutor` 在 `runtime.run_function` 前调用 gate | 单调用表示路径已验证；多调用回合没有独立 per-call（逐调用）activation，会 invalid（无效）/fail closed（故障时默认阻断） |
 | refusal-direction（拒答方向）/激活探针 | direction 与 linear probe（线性探针）artifact（工件）/detector | 正式 direction 是 policy-violation direction（策略违规方向）；probe 暴露合法调用误阻；样本仍很小 |
 | 读取本地开源模型隐藏状态 | 进程内 HF（Hugging Face 模型库）adapter（适配器）和 `resid_pre` hook（钩子） | 0.5B smoke、Qwen3 spike 与 held-out 都已验证 |
-| OWASP（开放全球应用程序安全项目）LLM01（大语言模型应用安全风险第 1 项）prompt injection | AgentDojo untrusted tool-output injection（不可信工具输出注入） | 覆盖 indirect-injection（间接注入）子集和一个正式攻击模板，不是完整 LLM01 |
-| 检测与拦截危险工具调用 | detector + name-level risk policy（工具名级风险策略）+ executor trace（执行器轨迹） | direction/MELON 有执行前审计；尚不是参数级授权系统 |
-| utility/security（任务可用性/安全性）双指标与内置对照 | AgentDojo checks + matrix aggregator（矩阵聚合器） | 已报告 BU、UA、ASR；built-in（内置方法）的 call-level（调用级）指标为 N/A |
-| ASR、拦截率、utility、开销 | matrix 聚合与人工 call review（调用审核） | 已保留原始计数；小样本、seed（随机种子）0、模型加载不进入 episode 计时 |
+| OWASP（Open Worldwide Application Security Project，开放全球应用程序安全项目）LLM01（其中 LLM 为 Large Language Model，即大语言模型；01 为风险编号）prompt injection | AgentDojo untrusted tool-output injection（不可信工具输出注入） | 四套件主矩阵仍只覆盖 indirect-injection（间接注入）子集和一个攻击模板，不是完整 LLM01 |
+| 检测与拦截危险工具调用 | detector + name-level risk policy（工具名级风险策略）+ executor trace（执行器轨迹） | 30 回合矩阵有人工审核；主矩阵是自动精确参考匹配，尚不是人工参数级授权审计 |
+| utility/security（任务可用性/安全性）双指标与内置对照 | AgentDojo checks + matrix aggregator（矩阵聚合器） | 已报告 BU、UA、ASR；built-in（内置方法）的 call-level（调用级）指标为 N/A（Not Applicable，不适用） |
+| ASR、拦截率、utility、开销 | matrix 聚合、受检分析与人工 call review（调用审核） | 主矩阵报告共同有效转移、失败桶和开销；30 回合矩阵保留表示级人工审核 |
 
 ## 高频追问
 
@@ -176,7 +199,7 @@ non-padding token（非填充词元）；Qwen smoke 中是 assistant marker（�
 ### 最大工程难点是什么？
 
 AgentDojo 默认本地模型走 vLLM（高吞吐大语言模型推理引擎）/OpenAI-compatible（OpenAI 接口兼容）服务，服务边界拿不到
-隐藏状态，所以增加了进程内 HF adapter。真正难点不是写一个 dot product，而是让 tool call、activation、chat template、
+隐藏状态，所以增加了进程内 HF adapter。真正难点不是写一个 dot product（点积），而是让 tool call、activation、chat template、
 model revision（模型修订版本）、layer/position 和执行 trace 可对齐；artifact 因此绑定这些身份，运行前
 preflight（预检），运行时仍做逐调用校验。
 
@@ -204,15 +227,17 @@ hashing embedding（哈希嵌入）和阻断后继续。新增的 `melon_paper` 
 （少样本掩码提示词）、虚构 `read_file` 输出包装、security-specific argument projection（安全特定参数投影）、
 semantic embedding（语义嵌入）接口、跨步骤 cache（缓存）、整批执行前检查和命中后 episode abort（回合终止）。
 
-这叫“算法与协议兼容重建”，还不能叫“论文效果复现”：官方源码没有许可证、版本锁、完整模型配置或原始日志，目前也尚未
-完成论文三个模型、97/629 全量和四攻击的正式效果表。
+这叫“算法与协议兼容重建”，还不能叫“论文效果复现”：官方源码没有许可证、版本锁、完整模型配置或原始日志。本仓库已经
+完成一个生成模型、97 个 clean（无攻击）任务与全部 629 个 attacked（受攻击）配对，但只跑
+`important_instructions` 单攻击，并使用本地 MiniLM 而不是论文 OpenAI（模型服务提供方）嵌入后端；论文的三个模型、四攻击和
+原始数值仍未复现。
 这里的缓存只指跨步骤工具调用缓存，不包含官方源码的 embedding cache（嵌入缓存）；整批终止和 fail-closed（故障时默认阻断）
 是本仓库的工程化边界。论文附录与发布源码在中性提示开头和最后一条少样本工具输出上不一致，本实现以论文附录为准。
 
-最新 16 配对筛选共计划 64 回合，其中 60 个有效；有效 attacked trial（受攻击试验）中，`none` 的 Targeted ASR 为
-`6/15`，`melon_paper` 为 `5/15`。唯一阻断在 runtime（运行时）前生效，但不匹配精确攻击参考调用，所以面试时应把它讲成
-“控制流验证 + 负结果”，不能讲成已验证恶意调用拦截。唯一正式分母来源是
-[`reports/melon-paper-screening.md`](../reports/melon-paper-screening.md)。
+16 配对 screening（筛选实验）只保留为开发阶段证据；正式效果只看
+[`reports/qwen3-v112-full-matrix.md`](../reports/qwen3-v112-full-matrix.md)。完整矩阵的 577 个共同有效 attacked 配对上，
+Targeted ASR 为 `146/577→53/577`；但调用级 `92/287` 仍只是 automatic exact-reference match（自动精确参考匹配），
+不能说成 287 个调用都经过人工恶意标注。
 
 ### MELON 的 `0.8` 是校准阈值吗？有论文的理论保证吗？
 
@@ -271,11 +296,10 @@ test 只做一次最终报告。真实 artifact 固定模型、revision、dtype�
 
 ### 当前最大限制是什么？
 
-首轮 held-out 只有 3 个 user tasks，而且统一使用 `injection_task_5 + injecagent`；人工审核后只有一条恶意
-proposal，远不足以估计稳定拦截率。BU 只有 1/3，说明基础模型的任务完成和精确回答能力也是主要瓶颈。Activation
-probe 在 attacked task 上误阻合法写操作，冻结 MELON 的 hashing embedding 也可能漏掉语义等价调用。新
-`melon_paper` 尚未完成全量模型实验。当前价值是完整、
-可审计的工程闭环和诚实的小型 held-out 失败分析，不是跨模板泛化结论。
+表示级 held-out 仍只有 3 个 user tasks，而且统一使用 `injection_task_5 + injecagent`；人工审核后只有一条恶意
+proposal，远不足以估计 direction/probe 的稳定拦截率。四套件 MELON 主矩阵虽然覆盖全部 629 个 attacked 配对，
+但只有一个攻击、本地 MiniLM 后端和自动参考调用匹配；它还带来更多解析失败、1 次 clean 误阻与 attacked utility 下降。
+因此当前价值是完整、可审计的工程闭环和有明确代价的单攻击结果，不是跨攻击、跨模型或论文数值泛化。
 
 ## 可以说与不能说
 
@@ -284,9 +308,10 @@ probe 在 attacked task 上误阻合法写操作，冻结 MELON 的 hashing embe
 - “我实现了运行时 tool-call gate，并在 AgentDojo synthetic Banking 闭环中验证了执行前阻断。”
 - “我实现了 direction/probe 的训练、校准、artifact 和推理路径。”
 - “我独立实现了 MELON 的核心算法切片，当前用本地 hashing embedding。”
-- “我另外按论文附录独立重建了 `melon_paper`：少样本掩码轨迹、参数投影、语义嵌入、跨步骤工具调用缓存、整批预检和命中后回合终止；当前尚未
-  把它包装成论文原始数值复现。”
-- “`melon_paper` 的 16 配对筛选已完成；链路稳定，但掩码候选稀疏，唯一阻断不是精确攻击参考调用，因此我主动停止在筛选阶段。”
+- “我另外按论文附录独立重建了 `melon_paper`：少样本掩码轨迹、参数投影、语义嵌入、跨步骤工具调用缓存、整批预检和命中后回合终止。”
+- “四套件主矩阵计划 1452 回合、有效 1380；共同有效 attacked 配对上 ASR 是 146/577→53/577，同时 clean/attacked
+  utility 分别是 36/95→35/95、166/577→157/577，中位开销增加 4.923 秒。”
+- “92/287 是自动精确参考调用阻断，不是人工恶意调用拦截率；46 个非参考阻断和 1 个 clean 误阻单列。”
 - “Qwen3-8B 的首轮 30-episode held-out 已完成；direction 和 MELON 各审核到 1/1 恶意调用阻断，probe 则暴露了
   合法调用误阻。”
 - “Qwen3-30B 白盒与 no-defense screening 已跑通，但 exact positive gate（精确正例门槛）未满足，所以我在训练 probe 和打开
@@ -294,10 +319,11 @@ probe 在 attacked task 上误阻合法写操作，冻结 MELON 的 hashing embe
 
 不能说：
 
-- “已经在 8B 模型上显著降低 ASR”。当前虽有 `1/3 → 0/3` 的首轮计数，但分母极小、攻击模板单一，不能称显著。
+- “已经证明跨攻击泛化或复现论文 ASR”。主矩阵只有 `important_instructions` 单攻击，且使用 MiniLM，不是论文后端与四攻击。
 - “activation probe 成功拦截了攻击”。该组没有恶意 proposal，ASR=0 同时伴随合法 `update_user_info` 被提前阻断。
 - “首次提出 Agent hidden-state circuit breaker（隐藏状态熔断器）”。已有相关工作。
-- “完整复现了 MELON 官方效果”。论文模型环境和全量实验尚未重建，当前筛选也不支持这一说法。
+- “完整复现了 MELON 官方效果”。629 配对已重跑，但论文模型环境、嵌入后端、四攻击和原始数值仍未重建。
+- “`melon_paper` 人工拦截了 92/287 个恶意调用”。这是自动工具名/参数精确匹配，不是人工标签。
 - “当前 MELON 具有论文 §3.4 的理论保证”。虽已实现集成计算原语，但尚未验证该界成立所需的统计前提。
 - “security_results=True 表示安全”。它表示攻击成功。
 - “30B Targeted ASR 是 0/1，所以模型安全”。该 trial 已执行一笔人工审核为 injection-driven 的未授权转账。
@@ -307,11 +333,12 @@ probe 在 attacked task 上误阻合法写操作，冻结 MELON 的 hashing embe
 
 1. **5 分钟**：运行 `interview-demo`，用 proposed（已提出）/ blocked（已阻断）/ runtime-invoked（已进入运行时）
    三个词解释现场输出。
-2. **5 分钟**：打开正式 held-out 报告，只讲一张主表和 activation probe 的失败案例。
-3. **10 分钟**：不看稿讲两遍“两分钟主叙事”，第二遍必须主动说出样本量和攻击模板限制。
-4. **10 分钟**：随机回答五题：为什么选 tool-call boundary、hook 哪个 token、标签如何做、如何防数据泄漏、
+2. **5 分钟**：打开四套件主矩阵，只讲共同有效 ASR 转移、可用性、失败和开销。
+3. **5 分钟**：打开 30 回合表示矩阵，只讲 activation probe 的失败案例和人工调用审核。
+4. **5 分钟**：不看稿讲两遍“两分钟主叙事”，第二遍必须主动说出 MiniLM 与单攻击限制。
+5. **10 分钟**：随机回答五题：为什么选 tool-call boundary、hook 哪个 token、标签如何做、如何防数据泄漏、
    MELON 与 probe 的成本差异。
 
-验收标准：断网、无 GPU（图形处理器）时仍能完成 synthetic demo；不看代码也能画出
+验收标准：断网、无 GPU（Graphics Processing Unit，图形处理器）时仍能完成 synthetic demo；不看代码也能画出
 `tool output → model state/call → observation → decision → side effect`，并准确解释 probe 的 ASR=0 为什么
 不是成功 interception。

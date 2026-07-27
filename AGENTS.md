@@ -3,7 +3,7 @@
 ## 目标
 
 本仓库服务于 Agent（智能体）技术面试：把简历中的“表示级探针 × 工具调用边界”维护成可运行、可解释、可复现的
-工程证据，不追求临时发明新方法或刷 SOTA（当前最先进水平）。
+工程证据，不追求临时发明新方法或刷 SOTA（State of the Art，当前最先进水平）。
 
 核心威胁是 indirect prompt injection（间接提示注入）：不可信 tool output（工具输出）进入上下文，模型随后提出
 越权 tool call（工具调用）。真正的安全边界位于候选动作已生成、`FunctionsRuntime.run_function` 尚未执行之时。
@@ -20,8 +20,10 @@ untrusted tool output
 → AgentDojo utility and attack-goal checks
 ```
 
-- 基线固定为 AgentDojo（智能体安全评测框架）`agentdojo==0.1.35`、Banking（银行任务套件）`v1.2.2` 和
-  Qwen3-8B（通义千问 3 80 亿参数模型）冻结配置。
+- 表示级矩阵固定为 AgentDojo（智能体安全评测框架）`agentdojo==0.1.35`、Banking（银行任务套件）`v1.2.2` 和
+  Qwen3-8B（通义千问 3 80 亿参数模型）冻结配置；MELON（Masked re-Execution and TooL comparisON，
+  掩码重执行与工具调用比较）主矩阵固定为同一生成模型、
+  benchmark（基准）`v1.1.2` 四套件、`important_instructions` 单一攻击与本地 MiniLM（小型句向量模型）。
 - 表示方法参考 *Your Agent is More Brittle Than You Think*（《你的智能体比你想象中更脆弱》）§3.3；本仓库自行
   操作化 token（词元）、hook（钩子）、artifact（工件）和执行边界，不声称复现论文未公开的精确约定。
 - Direction（方向）是可解释基线；refusal direction（拒答方向）不等同于
@@ -29,8 +31,9 @@ untrusted tool output
 - 冻结结果中的 `melon` 只称 MELON（掩码重执行检测方法）核心算法切片：已实现 masked re-execution（掩码重执行）、
   cache（缓存）和 pre-action comparison（动作执行前比较）；hashing embedding（哈希嵌入）、单中性提示和
   block-then-continue（阻断后继续）都不同于论文完整配置。
-- 新增 `melon_paper` 是依据论文附录独立实现的兼容重建：按附录重建的少样本掩码轨迹、参数投影、语义嵌入接口、整批预检和
-  命中后回合终止；只有 `text-embedding-3-large` 后端对应论文发布代码，且尚无正式全量效果结果。
+- `melon_paper` 是依据论文附录独立实现的兼容重建：按附录重建的少样本掩码轨迹、参数投影、语义嵌入接口、整批预检和
+  命中后回合终止；主矩阵使用本地 `sentence-transformers/all-MiniLM-L6-v2`，只有 `text-embedding-3-large`
+  后端对应论文发布代码。
 - Detector（检测器）只打分，risk policy（风险策略）形成决策，executor（执行器）才执行
   allow/block（放行/阻断）。
 
@@ -45,7 +48,11 @@ untrusted tool output
 - `melon_paper` 的 16 配对 screening（筛选实验）共计划 64 回合，60 个有效；唯一阻断发生在 runtime（运行时）前，
   但不匹配精确攻击参考调用，不能计为已验证恶意调用拦截。该筛选数字只维护在
   `reports/melon-paper-screening.md`。
-- Qwen3-30B-A3B（通义千问 3，300 亿总参数/30 亿激活参数模型）FP8（8 位浮点）已通过
+- `melon_paper` 四套件主矩阵计划 1452 回合、有效 1380 回合；共同有效 attacked（受攻击）577 配对上，
+  Targeted ASR（Targeted Attack Success Rate，定向攻击成功率）从 146/577 降至 53/577，93 个改善、0 个反向。
+  调用统计是自动精确参考匹配，不是人工恶意标签；93 是回合级转移，不是准确拦截 93 次。MiniLM 后端与单攻击协议
+  也不是论文数值或四攻击复现。正式数字只维护在 `reports/qwen3-v112-full-matrix.md`。
+- Qwen3-30B-A3B（通义千问 3，300 亿总参数/30 亿激活参数模型）FP8（8-bit Floating Point，8 位浮点）已通过
   layer-29 hidden-state（第 29 层隐藏状态）与
   native tool-call（原生工具调用）smoke。其预注册 screening（筛选实验）中 clean utility（无攻击任务可用性）通过；
   attacked run（受攻击运行）执行了 injection-driven（注入驱动）未授权转账，但因目标账户抄错未命中 AgentDojo
@@ -75,10 +82,11 @@ untrusted tool output
 - 模型、revision（修订版本）、dtype（数据类型）、layer、position 或模板身份不兼容时
   fail closed（故障时默认阻断），不静默复用 artifact。
 - Function-call（函数调用）表示必须 replay（重放）模型原始生成 token；不得重序列化
-  JSON（JavaScript 对象表示法）冒充原表示。
+  JSON（JavaScript Object Notation，JavaScript 对象表示法）冒充原表示。
 - 默认只运行 AgentDojo 沙箱工具；不连接真实邮件、银行、账户、shell（命令行外壳）或不可逆文件操作。
-- 不提交密钥、私人输入、机器地址、GPU（图形处理器）编号、缓存路径、权重、原始隐藏状态或大日志。
-- 不扩展 RL（强化学习）、多智能体、MCP（模型上下文协议）、GUI（图形用户界面）、Web UI（网页用户界面）或
+- 不提交密钥、私人输入、机器地址、GPU（Graphics Processing Unit，图形处理器）编号、缓存路径、权重、原始隐藏状态或大日志。
+- 不扩展 RL（Reinforcement Learning，强化学习）、多智能体、MCP（Model Context Protocol，模型上下文协议）、
+  GUI（Graphical User Interface，图形用户界面）、Web UI（Web User Interface，网页用户界面）或
   分布式训练。
 - 不复制无明确许可证的 MELON 或 PVDetector（投影向量检测器）源文件；按论文独立实现并披露差异。
 
