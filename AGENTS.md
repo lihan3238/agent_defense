@@ -92,4 +92,4 @@ untrusted tool output
 
 开始工作先读 `README.md`。理解代码优先读 `docs/code-tour.md`；稳定设计见
 `docs/architecture.md`，实验规则见 `docs/experiment-protocol.md`，面试话术见
-`docs/interview-guide.md`。
+`docs/interview-guide.md`，实验与证据记录入口见 `reports/README.md`。

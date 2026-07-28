@@ -206,13 +206,15 @@ Refusal Direction（拒答方向）、PVDetector（投影向量检测器）和 T
 
 ## 详细资料
 
+- [实验与证据记录索引](reports/README.md)：所有报告的职责、证据状态、机读摘要和推荐阅读顺序。
 - [代码导览](docs/code-tour.md)：一条真实调用链、核心符号、断点和 90 分钟练习。
 - [简历证据对齐](docs/resume-evidence.md)：逐句映射代码、实验事实和必须披露的限制。
 - [跨模型复核协议](docs/cross-model-replication.md)：Qwen3-30B 预注册、screening 负结果、停止决策和未执行阶段。
 - [架构说明](docs/architecture.md)：稳定设计与实现语义。
 - [实验协议](docs/experiment-protocol.md)：split（数据划分）、阈值、指标、有效性和完整复现命令。
 - [MELON 论文兼容重建](docs/melon-reproduction.md)：官方源码审计、按论文附录重建的掩码轨迹、语义嵌入、629 案例协议与不可复现项。
-- [MELON 论文兼容筛选报告](reports/melon-paper-screening.md)：16 个预注册配对、64 回合有效性、掩码候选稀疏和唯一阻断审核。
+- [MELON 论文兼容筛选报告](reports/melon-paper-screening.md)：主矩阵前的历史记录，保存 16 个预注册配对、
+  64 回合有效性、掩码候选稀疏和唯一阻断审核。
 - [面试讲解指南](docs/interview-guide.md)：两分钟话术、简历映射和高频追问。
 - [四套件 MELON 主矩阵](reports/qwen3-v112-full-matrix.md)：1452 回合计划、共同有效配对、失败桶和自动调用匹配。
 - [表示级 held-out 报告](reports/qwen3-heldout-matrix.md)：30 回合 direction/probe、内置防御与人工调用审核。

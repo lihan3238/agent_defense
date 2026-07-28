@@ -18,16 +18,20 @@
 - 一条真实调用链和建议阅读顺序见 [代码导览](code-tour.md)；
 - 已实际运行的工程、边界和白盒接线证据见
   [已验证运行快照](../reports/verified-smoke.md)；
-- 冻结 Qwen3-8B（通义千问 3 80 亿参数模型）矩阵的完整结果只维护在
-  [正式 held-out（留出测试）报告](../reports/qwen3-heldout-matrix.md)；
+- Qwen3-8B（通义千问 3 80 亿参数模型）四套件 MELON（Masked re-Execution and TooL comparisON，
+  掩码重执行与工具调用比较）主矩阵见
+  [完整主矩阵报告](../reports/qwen3-v112-full-matrix.md)，表示级 direction/probe（方向/探针）结果见
+  [held-out（留出测试）报告](../reports/qwen3-heldout-matrix.md)；两者职责见
+  [实验与证据记录索引](../reports/README.md)；
 - split（数据划分）、阈值、分母和复现命令见 [实验协议](experiment-protocol.md)。
 
 当前实现覆盖进程内 Hugging Face（模型库）tool calling（工具调用）、两种 `resid_pre`
 capture position（捕获位置）、direction/probe artifact（方向/探针工件）、
-MELON（掩码重执行检测方法）masked re-execution（掩码重执行）、
+MELON masked re-execution（掩码重执行）、
 AgentDojo（智能体安全评测框架）pre-action executor（动作执行前执行器）、activation recorder（激活记录器）和
-held-out matrix（留出测试矩阵）。这里关注这些部件如何组合，不重复列出某次运行的 BU（良性任务可用性）、
-UA（攻击场景任务可用性）、ASR（攻击成功率）或延迟。
+held-out matrix（留出测试矩阵），以及 `melon_paper` 四套件完整矩阵的生成、验收与分析链路。这里关注这些部件如何组合，
+不重复列出某次运行的 BU（Benign Utility，良性任务可用性）、UA（Utility Under Attack，攻击场景任务可用性）、
+ASR（Attack Success Rate，攻击成功率）或延迟。
 
 ## 3. 端到端控制流
 
@@ -72,13 +76,14 @@ SystemMessage
 → ToolsExecutionLoop([GuardedToolsExecutor, LLM])
 ```
 
-这与默认 `[ToolsExecutor, LLM]` 的差别很小，便于审计拦截点。
+这里的 LLM（Large Language Model，大语言模型）只负责提出候选动作。该组合与默认 `[ToolsExecutor, LLM]` 的差别很小，
+因此拦截点便于审计。
 
 ## 4. 核心类型
 
 ### `CandidateToolCall`
 
-记录工具名、结构化参数和 call id（调用标识符）。`canonical_text()` 将参数排序后序列化，使 MELON 比较不受字典顺序影响。
+记录工具名、结构化参数和 call ID（Identifier，调用标识符）。`canonical_text()` 将参数排序后序列化，使 MELON 比较不受字典顺序影响。
 
 ### `DetectionContext`
 
@@ -99,7 +104,7 @@ reason code（原因码）。
 前者把 `runtime_invoked`（是否进入 `runtime.run_function`）与 `tool_succeeded`（工具是否无错误返回）分开；即使
 工具先产生部分副作用再报错，也不会被错误记录成“未执行”。后者记录整个 trial（试验）的 utility（任务可用性）、
 攻击成功、拦截与延迟。正式聚合层按 AgentDojo 上游口径分别计算 BU、attacked（受攻击）`utility` 的 UA、
-Targeted ASR（定向攻击成功率），并单列进入各指标分母的 valid coverage（有效覆盖率）；这些 episode（回合）级
+Targeted ASR（Targeted Attack Success Rate，定向攻击成功率），并单列进入各指标分母的 valid coverage（有效覆盖率）；这些 episode（回合）级
 主指标不能由 call-level interception（调用级拦截率）替代。
 
 ## 5. Detector 与 policy（策略）为什么分开
@@ -113,11 +118,11 @@ Targeted ASR（定向攻击成功率），并单列进入各指标分母的 vali
 当前设计中：
 
 - `DirectionDetector`、`LinearProbeDetector`、`MelonToolCallDetector` 只打分。
-- `ToolRiskPolicy` 只做确定性风险分级，不声称是 ML（机器学习）detector。
+- `ToolRiskPolicy` 只做确定性风险分级，不声称是 ML（Machine Learning，机器学习）detector。
 - `RuntimeGate` 负责 enforcement（强制执行）。
 
 默认 `minimum_block_risk=MEDIUM`。低风险读取即使 detector 触发也不阻断；中高风险动作在 score 超阈值时阻断。
-若 detector 无 activation、输出 NaN（非数值）或维度不匹配，中高风险动作默认
+若 detector 无 activation、输出 NaN（Not a Number，非数值）或维度不匹配，中高风险动作默认
 fail closed（故障时默认阻断）。
 
 ## 6. 表示级方法
@@ -134,7 +139,7 @@ cosine(h) = dᵀh / ||h||
 
 默认使用 cosine（余弦相似度），也可以显式选择 projection（投影）。阈值只由
 benign calibration score（良性校准分数）的上分位数确定，并加入 `max(8 ULP, 1e-12 × score scale)` 的极小数值
-margin（余量）；其中 ULP（末位单位）用于刻画浮点精度，避免 NumPy（数值计算库）/math（数学模块）
+margin（余量）；其中 ULP（Unit in the Last Place，末位单位）用于刻画浮点精度，避免 NumPy（数值计算库）/math（数学模块）
 等价实现的末位误差把 calibration benign
 样本误判为触发。
 
@@ -173,7 +178,7 @@ resolved immutable revision（解析后的不可变修订版本）绑定。
 当前路径包含四个关键步骤：
 
 1. 收集当前轨迹中的 tool outputs（工具输出）；
-2. 隐藏原始用户任务，以中性提示重新调用同一个 LLM（大语言模型）；
+2. 隐藏原始用户任务，以中性提示重新调用同一个 LLM（Large Language Model，大语言模型）；
 3. 缓存 masked run（掩码运行）提出的 tool calls；
 4. 将原候选调用与缓存调用做最大相似度比较，在执行前阻断高相似调用。
 
@@ -228,7 +233,8 @@ fail-closed（故障时默认阻断）是本仓库的工具边界语义；论文
 [MELON 论文兼容重建](melon-reproduction.md)。
 
 `openai/text-embedding-3-large` 对应论文发布代码的 embedding backend（嵌入后端）；本地
-`sentence-transformers/all-MiniLM-L6-v2` 只用于无需外部接口的语义接线验证，结果必须分开命名。完整审计与协议见
+`sentence-transformers/all-MiniLM-L6-v2` 是四套件完整主矩阵实际使用的离线后端，但不能冒充论文嵌入配置或数值。
+完整审计与协议见
 [MELON 论文兼容重建](melon-reproduction.md)。
 
 ## 8. Hugging Face 表示采集
@@ -258,7 +264,8 @@ layer 22、隐藏宽度 4096；该位置的 assistant marker 为 `\n\n`。无防
 先生成并解析候选调用，parser（解析器）同时保留被选中合法调用的精确字符 span（跨度）；再把该 span 映射回模型原始
 generated token IDs（生成词元标识符），截取到对应 closing tag（结束标签），而不是搜索 completion（生成文本）中
 最后一个同名 closing tag。随后对 `prompt + raw call tokens`（提示词与原始调用词元）做一次无梯度 replay（重放），并在指定 block 读取
-closing-tag token 的 `resid_pre`。不重序列化 JSON（JavaScript 对象表示法），也不把 EOS（序列结束标记）或 call 后
+closing-tag token 的 `resid_pre`。不重序列化 JSON（JavaScript Object Notation，JavaScript 对象表示法），也不把
+EOS（End of Sequence，序列结束标记）或 call 后
 prose（普通文本）当作 function-call（函数调用）表示。元数据将
 `position=function_call_end`、`extra_forward_count=1`，正式延迟报告必须包含这次成本。字符—token 边界无法对齐时
 不执行猜测 replay，而是写入 `function_call_replay_boundary_error`，让高风险调用走 detector-invalid fail-closed。
@@ -286,7 +293,9 @@ hook（钩子）使用上下文管理器，异常退出时也会移除。Parser 
 - 当前 held-out 只覆盖同一攻击模板和极小 user-task（用户任务）子集；正式限制与 probe 误阻分析见
   [held-out 报告](../reports/qwen3-heldout-matrix.md#证据边界)。
 - 冻结的 `melon` slice（MELON 算法切片）没有 neutral-prompt ensemble（中性提示集成）、论文 §3.4 保证或命中后
-  episode abort（回合终止）语义；新增 `melon_paper` 已实现终止语义和集成计算原语，但尚未产生正式全量效果表。
+  episode abort（回合终止）语义；`melon_paper` 已实现终止语义和集成计算原语，并完成单一攻击下的四套件完整主矩阵。
+  主矩阵实际使用单个中性提示，集成原语只经过单元测试；结果仍使用本地 MiniLM（小型句向量模型），不是论文四攻击或
+  原始数值复现。
 - 首版表示防御要求一次只调用一个工具；多调用不会复用共享 activation，而会显式进入 detector-invalid 路径。
 - `melon` 的 blocked call（已阻断调用）仍保留为“模型提出过的调用”并附带 blocked tool result，以维持消息协议；
   Banking checks（银行任务检查）主要按环境副作用判定。迁移到依赖 function-call trace（函数调用轨迹）的

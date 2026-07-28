@@ -5,7 +5,7 @@
 > 模型提出的危险工具调用，怎样携带隐藏状态到达 gate（门控），并在
 > `FunctionsRuntime.run_function` 之前被允许或阻断？
 
-先建立最重要的心智模型：LLM（大语言模型）负责**提出候选动作**，detector（检测器）负责**产生风险信号**，
+先建立最重要的心智模型：LLM（Large Language Model，大语言模型）负责**提出候选动作**，detector（检测器）负责**产生风险信号**，
 `RuntimeGate`（运行时门控）负责**形成决策**，`GuardedToolsExecutor`（受保护工具执行器）才负责**执行该决策**。
 
 ## 1. 真实调用链
@@ -40,8 +40,9 @@ SystemMessage
 → ToolsExecutionLoop([GuardedToolsExecutor, LLM])
 ```
 
-第一次 LLM 调用先产生候选动作；之后循环执行“executor（执行器）处理调用 → LLM 读取工具结果”。正式路径使用
-Qwen3-8B（通义千问 3 80 亿参数模型），运行 Banking（银行任务套件）任务。
+第一次 LLM 调用先产生候选动作；之后循环执行“executor（执行器）处理调用 → LLM 读取工具结果”。正式路径都使用
+Qwen3-8B（通义千问 3 80 亿参数模型）：表示级矩阵运行 Banking（银行任务套件），`melon_paper` 主矩阵运行
+Banking、Slack（团队协作任务套件）、Travel（旅行任务套件）和 Workspace（办公任务套件）。
 
 ## 2. 两条数据通道
 
@@ -70,16 +71,18 @@ policy（策略）又能看到实际工具名和参数风险。
 2. [`experiments.py`](../src/agent_defense/experiments.py)
 
    - `build_hf_experiment_pipeline`：把 defense（防御方式）名映射到 detector、
-     MELON（掩码重执行检测方法）provider（提供器）或 AgentDojo built-in（内置防御）；
+     MELON（Masked re-Execution and TooL comparisON，掩码重执行与工具调用比较）provider（提供器）或
+     AgentDojo built-in（内置防御）；
    - `run_hf_agentdojo_case`：运行一个 clean/attacked episode（无攻击/受攻击回合），并收集
-     utility（任务可用性）、ASR（攻击成功率）、trace（轨迹）和开销。
+     utility（任务可用性）、ASR（Attack Success Rate，攻击成功率）、trace（轨迹）和开销。
 
 3. [`hf_llm.py`](../src/agent_defense/hf_llm.py)
 
    - `HuggingFaceToolCallingLLM.query`：渲染消息、生成、解析调用和写入 activation；
    - `_ResidualPreCapture`：在 decoder block（解码器层）上注册 `forward_pre_hook`；
    - `tool_input`：首次 generation prefill（生成预填充）的最后一个 non-padding token（非填充词元）；
-   - `function_call`：沿原始 generated token IDs（生成词元标识符）replay（重放）到调用 closing tag（结束标签）。
+   - `function_call`：沿原始 generated token IDs（Token Identifiers，生成词元标识符）replay（重放）到调用
+     closing tag（结束标签）。
 
 4. [`agentdojo_integration.py`](../src/agent_defense/agentdojo_integration.py)
 
@@ -96,12 +99,34 @@ policy（策略）又能看到实际工具名和参数风险。
 
    - `DirectionDetector`：difference-in-means direction（均值差方向）的 cosine/projection score（余弦/投影分数）；
    - `LinearProbeDetector`：StandardScaler（标准化器） + logistic probe（逻辑回归探针）；
-   - `MelonToolCallDetector`：比较原调用与 masked re-execution（掩码重执行）的候选调用。
+   - `MelonToolCallDetector`：冻结 `melon` 切片中比较原调用与 masked re-execution（掩码重执行）候选调用。
+
+论文兼容路径还需要跳读 [`melon.py`](../src/agent_defense/melon.py)、
+[`melon_agentdojo.py`](../src/agent_defense/melon_agentdojo.py) 和
+[`agentdojo_integration.py`](../src/agent_defense/agentdojo_integration.py) 中的四个入口：
+
+- `PaperMelonToolCallDetector`：`melon_paper` 的参数投影与语义比较；
+- `AgentDojoPaperMaskedReexecutionProvider`：按论文附录重建掩码轨迹；
+- `GuardedToolsExecutor.query` 的 `batch_preflight`（整批预检）：先评估本轮全部候选，再决定是否执行；
+- `_AbortAwareLLM`：命中阻断后终止回合，避免继续生成后续动作。
 
 最后才看 [`matrix.py`](../src/agent_defense/matrix.py) 的 `apply_call_reviews` 和
-`aggregate_results`；它们解释正式实验怎样从 episode 结果得到 BU（良性任务可用性）、
-UA（攻击场景任务可用性）、ASR 和人工审核指标，
+`aggregate_results`；它们解释正式实验怎样从 episode 结果得到 BU（Benign Utility，良性任务可用性）、
+UA（Utility Under Attack，攻击场景任务可用性）、ASR 和人工审核指标，
 不是 runtime 安全边界本身。
+
+完整主矩阵的记录链另由一组受检脚本负责：
+
+```text
+generate_v112_full_manifests.py
+→ run_v112_full_worker.sh
+→ validate_v112_full_results.py
+→ analyze_v112_full_results.py
+→ reports/qwen3-v112-full-matrix.md
+```
+
+生成器固定完整分母；验收器核对 16 份清单、身份、指纹和结果结构；分析器计算共同有效配对、结果转移、失败桶、调用诊断、
+开销和纯文本攻击子集。它们不参与单回合的运行时阻断。
 
 ## 4. Gate 的四条决策规则
 
@@ -159,13 +184,13 @@ episode 端到端时间和模型调用数。
 可以与 direction/probe/MELON 做同粒度调用审计。
 
 AgentDojo built-in `repeat_user_prompt` 使用上游 executor，当前没有本项目的 per-call trace（逐调用轨迹），所以调用级
-interception/false-block（拦截率/误阻率）必须是 `N/A`（不适用）。
+interception/false-block（拦截率/误阻率）必须是 `N/A`（Not Applicable，不适用）。
 
 ## 6. 最容易讲错的术语
 
 | 术语 | 正确含义 |
 |---|---|
-| `tool_input` | CLI（命令行界面）名称；artifact 中精确记为 `generation_prefill_last_nonpad` |
+| `tool_input` | CLI（Command-Line Interface，命令行界面）名称；artifact 中精确记为 `generation_prefill_last_nonpad` |
 | `function_call` | CLI 名称；artifact 中精确记为 `function_call_end` |
 | `triggered` | detector 分数超过阈值，不保证最终 block |
 | detector `valid`（有效） | detector 是否健康，不表示 episode 安全 |
@@ -226,12 +251,16 @@ tool output → model state/call → observation → decision → side effect
 
 ### 60–75 分钟：理解结果
 
-阅读 [正式结果报告](../reports/qwen3-heldout-matrix.md)，回答：
+先看 [实验与证据记录索引](../reports/README.md)，再依次阅读
+[四套件主矩阵](../reports/qwen3-v112-full-matrix.md) 和
+[表示级 held-out（留出测试）报告](../reports/qwen3-heldout-matrix.md)，回答：
 
+- 为什么跨防御比较优先看共同有效配对？
+- 为什么 `92/287` 不能称为人工确认的恶意调用拦截率？
 - 为什么 ASR 不等于 interception？
 - 为什么 probe 的 ASR=0 不是成功拦截？
 - 为什么 30/30 valid 仍可能 BU=1/3？
-- 为什么 MELON scoring 很快，端到端却慢约 3.8 秒？
+- 为什么两条 MELON 路径的额外生成开销不能只看 detector latency（检测器延迟）？
 
 ### 75–90 分钟：面试复述
 
